@@ -1,14 +1,12 @@
 FILE: backend/main.py
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import sqlite3
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, Integer, String
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
 
 app = FastAPI()
 
 # Enable CORS for React frontend
-from fastapi.middleware.cors import CORSMiddleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
@@ -17,68 +15,60 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./todos.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+# SQLite database setup
+conn = sqlite3.connect('todos.db', check_same_thread=False)
+cursor = conn.cursor()
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS todos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    completed BOOLEAN DEFAULT FALSE
+)
+''')
+conn.commit()
 
-class Todo(Base):
-    __tablename__ = "todos"
-
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String, index=True)
-    description = Column(String)
-
-Base.metadata.create_all(bind=engine)
-
-class TodoCreate(BaseModel):
+class Todo(BaseModel):
     title: str
-    description: str
+    completed: bool
 
-class TodoRead(TodoCreate):
+class TodoIn(Todo):
+    pass
+
+class TodoOut(Todo):
     id: int
 
-@app.post("/todos/", response_model=TodoRead)
-def create_todo(todo: TodoCreate):
-    db = SessionLocal()
-    db_todo = Todo(title=todo.title, description=todo.description)
-    db.add(db_todo)
-    db.commit()
-    db.refresh(db_todo)
-    return db_todo
-
-@app.get("/todos/", response_model=list[TodoRead])
+@app.get("/todos", response_model=list[TodoOut])
 def read_todos():
-    db = SessionLocal()
-    todos = db.query(Todo).all()
-    return todos
+    cursor.execute("SELECT * FROM todos")
+    rows = cursor.fetchall()
+    return [{"id": row[0], "title": row[1], "completed": bool(row[2])} for row in rows]
 
-@app.put("/todos/{todo_id}", response_model=TodoRead)
-def update_todo(todo_id: int, todo: TodoCreate):
-    db = SessionLocal()
-    db_todo = db.query(Todo).filter(Todo.id == todo_id).first()
-    if not db_todo:
+@app.post("/todos", response_model=TodoOut)
+def create_todo(todo: TodoIn):
+    cursor.execute("INSERT INTO todos (title, completed) VALUES (?, ?)", (todo.title, todo.completed))
+    conn.commit()
+    return {"id": cursor.lastrowid, "title": todo.title, "completed": todo.completed}
+
+@app.put("/todos/{todo_id}", response_model=TodoOut)
+def update_todo(todo_id: int, todo: Todo):
+    cursor.execute("UPDATE todos SET title = ?, completed = ? WHERE id = ?", (todo.title, todo.completed, todo_id))
+    conn.commit()
+    if cursor.rowcount == 0:
         raise HTTPException(status_code=404, detail="Todo not found")
-    db_todo.title = todo.title
-    db_todo.description = todo.description
-    db.commit()
-    db.refresh(db_todo)
-    return db_todo
+    return {"id": todo_id, "title": todo.title, "completed": todo.completed}
 
-@app.delete("/todos/{todo_id}", response_model=TodoRead)
+@app.delete("/todos/{todo_id}", response_model=dict)
 def delete_todo(todo_id: int):
-    db = SessionLocal()
-    db_todo = db.query(Todo).filter(Todo.id == todo_id).first()
-    if not db_todo:
+    cursor.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
+    conn.commit()
+    if cursor.rowcount == 0:
         raise HTTPException(status_code=404, detail="Todo not found")
-    db.delete(db_todo)
-    db.commit()
-    return db_todo
+    return {"message": "Todo deleted"}
 
 FILE: backend/requirements.txt
-uvicorn[standard]
 fastapi
-sqlalchemy
+uvicorn[standard]
+pydantic
 
 FILE: frontend/package.json
 {
@@ -89,126 +79,22 @@ FILE: frontend/package.json
   "scripts": {
     "dev": "vite"
   },
-  "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
-  },
+  "dependencies": {},
   "devDependencies": {
-    "@types/react": "^18.0.15",
-    "@types/react-dom": "^18.0.6",
-    "typescript": "^4.7.4",
-    "vite": "^3.0.9"
+    "@vitejs/plugin-react": "^3.1.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "typescript": "^4.9.5",
+    "vite": "^4.3.9"
   }
 }
-
-FILE: frontend/src/App.tsx
-import React, { useState, useEffect } from 'react';
-import './App.css';
-
-interface Todo {
-  id: number;
-  title: string;
-  description: string;
-}
-
-function App() {
-  const [todos, setTodos] = useState<Todo[]>([]);
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-
-  useEffect(() => {
-    fetch('/api/todos')
-      .then(response => response.json())
-      .then(data => setTodos(data));
-  }, []);
-
-  const addTodo = async () => {
-    if (title && description) {
-      const response = await fetch('/api/todos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, description })
-      });
-      const newTodo = await response.json();
-      setTodos([...todos, newTodo]);
-      setTitle('');
-      setDescription('');
-    }
-  };
-
-  const updateTodo = async (id: number, updatedTitle: string, updatedDescription: string) => {
-    const response = await fetch(`/api/todos/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: updatedTitle, description: updatedDescription })
-    });
-    const updatedTodo = await response.json();
-    setTodos(todos.map(todo => (todo.id === id ? updatedTodo : todo)));
-  };
-
-  const deleteTodo = async (id: number) => {
-    await fetch(`/api/todos/${id}`, { method: 'DELETE' });
-    setTodos(todos.filter(todo => todo.id !== id));
-  };
-
-  return (
-    <div className="App">
-      <h1>Todo App</h1>
-      <input
-        type="text"
-        placeholder="Title"
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-      />
-      <input
-        type="text"
-        placeholder="Description"
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-      />
-      <button onClick={addTodo}>Add Todo</button>
-      <ul>
-        {todos.map(todo => (
-          <li key={todo.id}>
-            <input
-              type="text"
-              defaultValue={todo.title}
-              onBlur={(e) => updateTodo(todo.id, e.target.value, todo.description)}
-            />
-            <input
-              type="text"
-              defaultValue={todo.description}
-              onBlur={(e) => updateTodo(todo.id, todo.title, e.target.value)}
-            />
-            <button onClick={() => deleteTodo(todo.id)}>Delete</button>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-export default App;
-
-FILE: frontend/src/main.tsx
-import React from 'react';
-import ReactDOM from 'react-dom';
-import App from './App';
-
-ReactDOM.render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-  document.getElementById('root')
-);
 
 FILE: frontend/index.html
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Todo App</title>
 </head>
 <body>
@@ -218,8 +104,8 @@ FILE: frontend/index.html
 </html>
 
 FILE: frontend/vite.config.ts
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
@@ -227,105 +113,126 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ''),
-      },
-    },
-  },
-});
+        rewrite: (path) => path.replace(/^\/api/, '')
+      }
+    }
+  }
+})
 
-FILE: docker-compose.yml
-version: '3.8'
+FILE: frontend/src/main.tsx
+import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App'
 
-services:
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    volumes:
-      - ./backend:/app
-    ports:
-      - "8000:8000"
-    command: uvicorn main:app --reload --host 0.0.0.0 --port 8000
+ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+)
 
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    volumes:
-      - ./frontend:/usr/src/app
-      - /usr/src/app/node_modules
-    ports:
-      - "5173:5173"
-    command: npm run dev
-    depends_on:
-      - backend
+FILE: frontend/src/App.tsx
+import React, { useEffect, useState } from 'react';
+
+interface Todo {
+  id: number;
+  title: string;
+  completed: boolean;
+}
+
+const App = () => {
+  const [todos, setTodos] = useState<Todo[]>([]);
+  const [newTodoTitle, setNewTodoTitle] = useState('');
+
+  useEffect(() => {
+    fetch('/api/todos')
+      .then(response => response.json())
+      .then(data => setTodos(data));
+  }, []);
+
+  const addTodo = async () => {
+    if (newTodoTitle.trim()) {
+      const response = await fetch('/api/todos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newTodoTitle, completed: false })
+      });
+      const todo = await response.json();
+      setTodos([...todos, todo]);
+      setNewTodoTitle('');
+    }
+  };
+
+  const deleteTodo = async (id: number) => {
+    await fetch(`/api/todos/${id}`, { method: 'DELETE' });
+    setTodos(todos.filter(todo => todo.id !== id));
+  };
+
+  return (
+    <div>
+      <h1>Todo App</h1>
+      <input
+        type="text"
+        value={newTodoTitle}
+        onChange={(e) => setNewTodoTitle(e.target.value)}
+        placeholder="Add a new todo"
+      />
+      <button onClick={addTodo}>Add</button>
+      <ul>
+        {todos.map(todo => (
+          <li key={todo.id}>
+            {todo.title} - {todo.completed ? 'Completed' : 'Pending'}
+            <button onClick={() => deleteTodo(todo.id)}>Delete</button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
+
+export default App;
 
 FILE: README.md
 # Todo App
 
-## Setup and Run Instructions
+A simple Todo application built with React and FastAPI.
 
-### Prerequisites
-- Docker and Docker Compose installed on your machine.
+## Backend (FastAPI)
 
-### Steps to Run the Application
+### Setup
 
-1. **Clone the Repository**
-   ```bash
-   git clone <repository-url>
-   cd todo-app
-   ```
-
-2. **Build and Start Services**
-   ```bash
-   docker-compose up --build
-   ```
-
-3. **Access the Application**
-   - Open your web browser and go to `http://localhost:5173` to access the Todo App.
-
-### Project Structure
-
-- **Backend**:
-  - Uses FastAPI for REST API.
-  - SQLite is used as the database.
-  - CORS is enabled for React frontend running on port 5173.
-
-- **Frontend**:
-  - Built with React, TypeScript, and Vite.
-  - Fetches data from the backend via a proxy configured in `vite.config.ts`.
-
-### Running Without Docker
-
-If you prefer to run the application without Docker, follow these steps:
-
-#### Backend
 1. Navigate to the `backend` directory.
 2. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-3. Run the FastAPI server:
+3. Run the server:
    ```bash
-   uvicorn main:app --reload --port 8000
+   uvicorn main:app --reload
    ```
 
-#### Frontend
+The backend will be available at `http://localhost:8000`.
+
+## Frontend (React)
+
+### Setup
+
 1. Navigate to the `frontend` directory.
 2. Install dependencies:
    ```bash
    npm install
    ```
-3. Start the Vite development server:
+3. Run the development server:
    ```bash
    npm run dev
    ```
 
-4. Access the application at `http://localhost:5173`.
+The frontend will be available at `http://localhost:5173`.
 
-### Notes
-- Ensure that both backend and frontend are running before accessing the application.
-- The backend API is accessible at `http://localhost:8000` and is proxied to `/api` in the frontend.
+## Endpoints
 
-Enjoy using your Todo App!
+- **GET** `/todos`: Retrieve all todos.
+- **POST** `/todos`: Create a new todo.
+- **PUT** `/todos/{todo_id}`: Update an existing todo.
+- **DELETE** `/todos/{todo_id}`: Delete a todo.
+
+The API documentation is available at `http://localhost:8000/docs`.

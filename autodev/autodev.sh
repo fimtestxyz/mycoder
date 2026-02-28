@@ -1,6 +1,13 @@
 #!/bin/bash
-# autodev.sh - Local Autonomous Multi-Agent Software Development System v4
-# Phases: Plan → Code → Install → Validate → Launch → UAT → Debug Loop
+# autodev.sh v6 — Contract-Driven Loop with Resume Capability
+#
+# Feedback architecture:
+#   Contract (spec) → Code → Pre-flight → Install → Launch → UAT → Debug Loop
+#         ↑                                                    |
+#         └──────── Structured failures + history ────────────┘
+#
+# Resume: state saved after each phase. Re-run same command to continue
+#   from last failed step — no redownloading, no re-codegen, no re-install.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config/agent.config.json"
@@ -9,846 +16,821 @@ SCRIPTS_DIR="$SCRIPT_DIR/scripts"
 LOGS_DIR="$SCRIPT_DIR/logs"
 mkdir -p "$LOGS_DIR"
 
-# ── Dependency checks ─────────────────────────────────────────────────────────
+# ── Dependencies ──────────────────────────────────────────────────────────────
 for cmd in curl jq python3; do
     if ! command -v "$cmd" &>/dev/null; then
-        echo "Error: '$cmd' not found. Install with: brew install $cmd"
-        exit 1
+        echo "Error: '$cmd' not found. Install: brew install $cmd"; exit 1
     fi
 done
 
 OLLAMA_API="http://localhost:11434"
 if ! curl -sf "$OLLAMA_API/api/tags" > /dev/null 2>&1; then
-    echo "Error: Ollama not running. Start with: ollama serve"
-    exit 1
+    echo "Error: Ollama not running. Start: ollama serve"; exit 1
 fi
-echo "✅ Ollama API reachable at $OLLAMA_API"
 
 # ── Config ────────────────────────────────────────────────────────────────────
 cfg() {
     local key="$1" default="${2:-}"
-    local val
-    val=$(jq -r ".$key // empty" "$CONFIG_FILE" 2>/dev/null)
+    local val; val=$(jq -r ".$key // empty" "$CONFIG_FILE" 2>/dev/null)
     [[ -z "$val" || "$val" == "null" ]] && echo "$default" || echo "$val"
 }
 
 PLANNER_MODEL=$(cfg "planner_model" "qwen2.5-coder:14b")
 CODER_MODEL=$(cfg  "coder_model"    "qwen2.5-coder:32b")
 REPAIR_MODEL=$(cfg "repair_model"   "deepseek-coder:33b")
+REPAIR_FALLBACK=$(cfg "repair_model_fallback" "qwen2.5-coder:14b")
 MAX_RETRIES=$(cfg  "max_retries"    "3")
 PROJECT_REL=$(cfg  "project_root"   "workspace")
-PROJECT_BASE="$SCRIPT_DIR/$PROJECT_REL"
-
 BACKEND_PORT=$(cfg "backend_port"   "8000")
 FRONTEND_PORT=$(cfg "frontend_port" "5173")
+PROJECT_BASE="$SCRIPT_DIR/$PROJECT_REL"
 
-# ── Usage ─────────────────────────────────────────────────────────────────────
-if [[ -z "${1:-}" ]]; then
-    echo "Usage: $0 \"<Task Description>\""
-    exit 1
-fi
-
+[[ -z "${1:-}" ]] && { echo "Usage: $0 \"<task>\""; exit 1; }
 TASK="$1"
 PROJECT_SLUG=$(python3 -c "
-import sys, re
-s = re.sub(r'[^a-z0-9]+', '-', sys.argv[1].lower())[:40].strip('-')
-print(s or 'project')
-" "$TASK")
+import sys,re; s=re.sub(r'[^a-z0-9]+','-',sys.argv[1].lower())[:40].strip('-')
+print(s or 'project')" "$TASK")
 PROJECT_ROOT="$PROJECT_BASE/$PROJECT_SLUG"
-
-echo ""
-echo "╔══════════════════════════════════════════╗"
-echo "║      AutoDev — Local Agent Loop v4       ║"
-echo "╚══════════════════════════════════════════╝"
-echo "  Task:    $TASK"
-echo "  Output:  $PROJECT_ROOT"
-echo "  Models:  $PLANNER_MODEL / $CODER_MODEL / $REPAIR_MODEL"
-echo ""
 mkdir -p "$PROJECT_ROOT"
 
+# ── Key paths ─────────────────────────────────────────────────────────────────
+STATE_FILE="$PROJECT_ROOT/.autodev_state.json"
+CONTRACT_FILE="$LOGS_DIR/contract.json"
+UAT_REPORT="$PROJECT_ROOT/uat_report.json"
+REPAIR_CONTEXT="$LOGS_DIR/repair_context.txt"
+SETUP_LOG="$PROJECT_ROOT/setup.log"
+PLAN_FILE="$LOGS_DIR/plan.json"
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# CORE HELPERS
+# STATE MANAGEMENT — resume from last completed phase
+# ═══════════════════════════════════════════════════════════════════════════════
+
+state_get() {
+    # state_get <field> [default]
+    local field="$1" default="${2:-}"
+    if [[ -f "$STATE_FILE" ]]; then
+        local val; val=$(jq -r ".$field // empty" "$STATE_FILE" 2>/dev/null)
+        [[ -z "$val" || "$val" == "null" ]] && echo "$default" || echo "$val"
+    else
+        echo "$default"
+    fi
+}
+
+state_set() {
+    # state_set <field> <value>
+    local field="$1" value="$2"
+    local current="{}"
+    [[ -f "$STATE_FILE" ]] && current=$(cat "$STATE_FILE")
+    echo "$current" | python3 -c "
+import json,sys
+state=json.load(sys.stdin)
+field,value=sys.argv[1],sys.argv[2]
+# Try to parse as JSON, else store as string
+try: state[field]=json.loads(value)
+except: state[field]=value
+print(json.dumps(state,indent=2))
+" "$field" "$value" > "$STATE_FILE.tmp" && mv "$STATE_FILE.tmp" "$STATE_FILE"
+}
+
+phase_done() {
+    # Mark a phase as completed and save to state
+    local phase="$1" info="${2:-{}}"
+    state_set "last_completed_phase" "$phase"
+    state_set "phase_${phase}_result" "$info"
+    state_set "task" "\"$TASK\""
+    state_set "project_slug" "\"$PROJECT_SLUG\""
+}
+
+skip_phase() {
+    # skip_phase <phase_num> <phase_name>
+    local phase="$1" name="$2"
+    echo "  ⏭  Phase $phase ($name) — already completed, skipping"
+    echo ""
+}
+
+LAST_PHASE=$(state_get "last_completed_phase" "0")
+RESUME_MODE=0
+[[ "$LAST_PHASE" -gt 0 ]] && RESUME_MODE=1
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 render_template() {
-    local tmpl="$1" out="$2"
-    shift 2
+    local tmpl="$1" out="$2"; shift 2
     python3 - "$tmpl" "$out" "$@" << 'PYEOF'
-import sys, os
-tmpl_path, out_path = sys.argv[1], sys.argv[2]
-with open(tmpl_path) as f:
-    content = f.read()
+import sys
+with open(sys.argv[1]) as f: content=f.read()
 for arg in sys.argv[3:]:
-    eq = arg.index('=')
-    k, v = arg[:eq], arg[eq+1:]
-    content = content.replace('{{' + k + '}}', v)
-with open(out_path, 'w') as f:
-    f.write(content)
+    eq=arg.index('='); k,v=arg[:eq],arg[eq+1:]
+    content=content.replace('{{'+k+'}}',v)
+with open(sys.argv[2],'w') as f: f.write(content)
 PYEOF
 }
 
 ollama_call() {
     local model="$1" prompt_file="$2" out_file="$3"
     local label="${4:-Agent}" timeout="${5:-300}"
-    echo "  [$label] Calling $model (timeout: ${timeout}s)..."
-    local prompt payload api_response model_output
+    echo "  [$label] → $model (timeout: ${timeout}s)..."
+    local prompt payload api_response
     prompt=$(cat "$prompt_file")
     payload=$(python3 -c "
-import json, sys
+import json,sys
 print(json.dumps({'model':sys.argv[1],'prompt':sys.argv[2],'stream':False,
-  'options':{'temperature':0.1,'num_ctx':8192,'num_predict':4096}}))
-" "$model" "$prompt")
+  'options':{'temperature':0.1,'num_ctx':8192,'num_predict':4096}}))" "$model" "$prompt")
     api_response=$(curl -s --max-time "$timeout" \
         -H "Content-Type: application/json" -d "$payload" \
         "$OLLAMA_API/api/generate" 2>&1)
-    local curl_exit=$?
-    if [[ $curl_exit -ne 0 ]]; then
-        echo "  [$label] ERROR: curl failed (exit $curl_exit)"
-        return 1
-    fi
-    model_output=$(python3 -c "
-import json, sys
-raw = sys.stdin.read()
+    [[ $? -ne 0 ]] && { echo "  [$label] ERROR: curl failed"; return 1; }
+    local model_output
+    model_output=$(echo "$api_response" | python3 -c "
+import json,sys
+raw=sys.stdin.read()
 try:
-    obj = json.loads(raw)
-    if 'error' in obj:
-        print('OLLAMA_ERROR: '+obj['error'],file=sys.stderr); sys.exit(1)
-    print(obj.get('response',''), end='')
-except: print(raw, end='')
-" <<< "$api_response")
-    local py_exit=$? chars=${#model_output}
-    if [[ $py_exit -ne 0 ]]; then
-        echo "  [$label] ERROR: API error. Raw: $(echo "$api_response" | head -2)"
-        return 1
-    fi
+    obj=json.loads(raw)
+    e=obj.get('error','')
+    if e: sys.stderr.write('ERROR:'+e); raise SystemExit(1)
+    sys.stdout.write(obj.get('response',''))
+except SystemExit: raise
+except: sys.stdout.write(raw)")
+    [[ $? -ne 0 ]] && { echo "  [$label] ERROR: API error"; return 1; }
     echo "$model_output" > "$out_file"
-    echo "  [$label] Done. ($chars chars)"
-    [[ $chars -lt 10 ]] && { echo "  [$label] WARNING: response too short"; return 1; }
+    local chars=${#model_output}
+    echo "  [$label] Done ($chars chars)"
+    [[ $chars -lt 10 ]] && { echo "  [$label] WARNING: very short response"; return 1; }
     return 0
 }
 
 extract_json() {
-    local file="$1"
-    python3 - "$file" << 'PYEOF'
-import sys, json, re
-with open(sys.argv[1]) as f:
-    raw = f.read()
-def try_parse(s):
+    python3 - "$1" << 'PYEOF'
+import sys,json,re
+with open(sys.argv[1]) as f: raw=f.read()
+def try_p(s):
     try: return json.loads(s.strip())
     except: return None
-result = try_parse(raw)
+result=try_p(raw)
 if result: sys.exit(0)
-clean = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]','',raw)
-clean = re.sub(r'[⠀-⣿]+','',clean)
-result = try_parse(clean)
+clean=re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]','',raw)
+clean=re.sub(r'[⠀-⣿]+','',clean)
+result=try_p(clean)
 if result:
-    with open(sys.argv[1],'w') as f: json.dump(result,f,indent=2)
-    sys.exit(0)
-for pattern in [r'```json\s*([\s\S]*?)```',r'```\s*([\s\S]*?)```',
-                r'<think>[\s\S]*?</think>\s*(\{[\s\S]*\})',r'(\{[\s\S]*\})']:
-    m = re.search(pattern, clean)
+    with open(sys.argv[1],'w') as f: json.dump(result,f,indent=2); sys.exit(0)
+for pat in [r'```json\s*([\s\S]*?)```',r'```\s*([\s\S]*?)```',r'(\{[\s\S]*\})']:
+    m=re.search(pat,clean)
     if m:
-        result = try_parse(m.group(1))
+        result=try_p(m.group(1))
         if result:
-            with open(sys.argv[1],'w') as f: json.dump(result,f,indent=2)
-            sys.exit(0)
-print(f"  [JSON] FAILED. Raw ({len(raw)} chars):",file=sys.stderr)
-print(raw[:300],file=sys.stderr)
+            with open(sys.argv[1],'w') as f: json.dump(result,f,indent=2); sys.exit(0)
 sys.exit(1)
 PYEOF
 }
+
+pm() { python3 "$SCRIPTS_DIR/process_manager.py" "$@"; }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HEADER
+# ═══════════════════════════════════════════════════════════════════════════════
+echo ""
+echo "╔══════════════════════════════════════════╗"
+echo "║   AutoDev — Contract-Driven Loop v6      ║"
+echo "╚══════════════════════════════════════════╝"
+echo "  Task:    $TASK"
+echo "  Output:  $PROJECT_ROOT"
+echo "  Models:  $PLANNER_MODEL / $CODER_MODEL / $REPAIR_MODEL"
+if [[ $RESUME_MODE -eq 1 ]]; then
+    echo ""
+    echo "  ↺  RESUME MODE — last completed phase: $LAST_PHASE"
+    echo "     Skipping completed phases, continuing from phase $((LAST_PHASE + 1))"
+fi
+echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PHASE 1: PLAN
 # ═══════════════════════════════════════════════════════════════════════════════
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Phase 1: Planning"
+echo "Phase 1: Architecture Planning"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-PLAN_PROMPT="$LOGS_DIR/plan_prompt.txt"
-PLAN_FILE="$LOGS_DIR/plan.json"
-render_template "$PROMPTS_DIR/planner.txt" "$PLAN_PROMPT" "TASK_DESCRIPTION=$TASK"
-
-PLAN_OK=0
-for attempt in 1 2 3; do
-    if ollama_call "$PLANNER_MODEL" "$PLAN_PROMPT" "$PLAN_FILE" "Planner" 120; then
-        if extract_json "$PLAN_FILE"; then PLAN_OK=1; break; fi
-        echo "  [Planner] Invalid JSON, retry $attempt..."
+if [[ "$LAST_PHASE" -ge 1 && -f "$PLAN_FILE" ]]; then
+    skip_phase 1 "Planning"
+else
+    render_template "$PROMPTS_DIR/planner.txt" "$LOGS_DIR/plan_prompt.txt" \
+        "TASK_DESCRIPTION=$TASK"
+    PLAN_OK=0
+    for attempt in 1 2 3; do
+        if ollama_call "$PLANNER_MODEL" "$LOGS_DIR/plan_prompt.txt" "$PLAN_FILE" "Planner" 120; then
+            if extract_json "$PLAN_FILE"; then PLAN_OK=1; break; fi
+            echo "  [Planner] Bad JSON, retry $attempt..."
+        fi
+    done
+    if [[ $PLAN_OK -eq 0 ]]; then
+        echo "  [Planner] Using fallback plan"
+        cat > "$PLAN_FILE" << 'FB'
+{"project_type":"Web App","tech_stack":["React","TypeScript","FastAPI","SQLite"],
+"modules":[{"name":"Frontend","technologies":["React","Vite"]},{"name":"Backend","technologies":["FastAPI","SQLite"]}],
+"folder_structure":["frontend/","backend/"],"dependencies":["react","fastapi","uvicorn","sqlalchemy"]}
+FB
     fi
-done
-
-if [[ $PLAN_OK -eq 0 ]]; then
-    echo "  [Planner] Using fallback plan"
-    cat > "$PLAN_FILE" << 'FALLBACK'
-{
-  "project_type": "Web App",
-  "tech_stack": ["React","TypeScript","FastAPI","SQLite"],
-  "modules": [
-    {"name":"Frontend","description":"React + Vite","technologies":["React","TypeScript","Vite"]},
-    {"name":"Backend","description":"FastAPI REST","technologies":["FastAPI","SQLAlchemy","SQLite"]}
-  ],
-  "folder_structure": ["frontend/","backend/"],
-  "dependencies": ["react","fastapi","uvicorn","sqlalchemy"]
-}
-FALLBACK
+    phase_done 1 '{"status":"ok"}'
 fi
-echo ""; jq . "$PLAN_FILE"; echo ""
+jq . "$PLAN_FILE"
+echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PHASE 2: CODE GENERATION
+# PHASE 2: GENERATE CONTRACT
 # ═══════════════════════════════════════════════════════════════════════════════
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Phase 2: Code Generation"
+echo "Phase 2: Generating Test Contract"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-CODE_PROMPT="$LOGS_DIR/code_prompt.txt"
-CODE_OUTPUT="$LOGS_DIR/code_output.txt"
-render_template "$PROMPTS_DIR/coder.txt" "$CODE_PROMPT" \
-    "TASK_DESCRIPTION=$TASK" "PLAN_JSON=$(cat "$PLAN_FILE")"
-
-if ! ollama_call "$CODER_MODEL" "$CODE_PROMPT" "$CODE_OUTPUT" "Coder" 600; then
-    echo "Error: Code generation failed."; exit 1
+if [[ "$LAST_PHASE" -ge 2 && -f "$CONTRACT_FILE" ]]; then
+    skip_phase 2 "Contract"
+    echo "  Contract: $(jq '.backend.endpoints|length' "$CONTRACT_FILE") API + $(jq '.frontend.checks|length' "$CONTRACT_FILE") frontend tests"
+    echo ""
+else
+    python3 "$SCRIPTS_DIR/contract_generator.py" \
+        "$PLAN_FILE" "$PROJECT_ROOT" "$BACKEND_PORT" "$FRONTEND_PORT" \
+        "${CONTRACT_FILE}.initial"
+    cp "${CONTRACT_FILE}.initial" "$CONTRACT_FILE"
+    echo "  Initial contract: $(jq '.backend.endpoints|length' "$CONTRACT_FILE") API tests (will expand after codegen)"
+    echo ""
+    phase_done 2 '{"status":"ok"}'
 fi
 
-echo "  Writing files..."
-"$SCRIPTS_DIR/write_files.sh" "$CODE_OUTPUT" "$PROJECT_ROOT"
+# ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 3: CODE GENERATION
+# ═══════════════════════════════════════════════════════════════════════════════
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "Phase 3: Code Generation"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-FILES_WRITTEN=$(find "$PROJECT_ROOT" -type f | wc -l | tr -d ' ')
-echo "  Files written: $FILES_WRITTEN"
-if [[ "$FILES_WRITTEN" -eq 0 ]]; then
-    echo "ERROR: No files written. Raw LLM output:"; head -50 "$CODE_OUTPUT"; exit 1
+FILES_COUNT=$(find "$PROJECT_ROOT" -type f \
+    -not -path "*/node_modules/*" -not -path "*/venv/*" \
+    -not -name ".autodev_state.json" -not -name "*.log" \
+    2>/dev/null | wc -l | tr -d ' ')
+
+if [[ "$LAST_PHASE" -ge 3 && "$FILES_COUNT" -gt 3 ]]; then
+    skip_phase 3 "Code Generation"
+    echo "  Existing files: $FILES_COUNT"
+    echo ""
+    # Update contract with discovered routes (in case we're resuming after codegen)
+    python3 "$SCRIPTS_DIR/contract_generator.py" \
+        "$PLAN_FILE" "$PROJECT_ROOT" "$BACKEND_PORT" "$FRONTEND_PORT" "$CONTRACT_FILE"
+    echo "  Contract updated: $(jq '.backend.endpoints|length' "$CONTRACT_FILE") API tests"
+    echo ""
+else
+    # Pass contract summary to coder so it knows exact API shape to implement
+    CONTRACT_SUMMARY=$(jq -r '
+      "Implement these exact endpoints: " +
+      (.backend.endpoints | map(.method + " " + .path) | join(", "))
+    ' "$CONTRACT_FILE" 2>/dev/null || echo "See plan")
+
+    render_template "$PROMPTS_DIR/coder.txt" "$LOGS_DIR/code_prompt.txt" \
+        "TASK_DESCRIPTION=$TASK" \
+        "PLAN_JSON=$(cat "$PLAN_FILE")" \
+        "CONTRACT_SUMMARY=$CONTRACT_SUMMARY"
+
+    if ! ollama_call "$CODER_MODEL" "$LOGS_DIR/code_prompt.txt" \
+            "$LOGS_DIR/code_output.txt" "Coder" 600; then
+        echo "Error: Code generation failed."; exit 1
+    fi
+
+    echo "  Writing files..."
+    "$SCRIPTS_DIR/write_files.sh" "$LOGS_DIR/code_output.txt" "$PROJECT_ROOT"
+    echo "  Validating written files (fence/syntax check)..."
+    python3 "$SCRIPTS_DIR/validate_written_files.py" "$PROJECT_ROOT"
+    FILES_WRITTEN=$(find "$PROJECT_ROOT" -type f \
+        -not -path "*/node_modules/*" -not -path "*/venv/*" \
+        -not -name ".autodev_state.json" | wc -l | tr -d ' ')
+    echo "  Files written: $FILES_WRITTEN"
+    [[ "$FILES_WRITTEN" -eq 0 ]] && {
+        echo "ERROR: No files written. LLM output:"; head -30 "$LOGS_DIR/code_output.txt"
+        exit 1
+    }
+
+    # Update contract with discovered routes
+    python3 "$SCRIPTS_DIR/contract_generator.py" \
+        "$PLAN_FILE" "$PROJECT_ROOT" "$BACKEND_PORT" "$FRONTEND_PORT" "$CONTRACT_FILE"
+    echo "  Contract updated: $(jq '.backend.endpoints|length' "$CONTRACT_FILE") API tests"
+    phase_done 3 "{\"status\":\"ok\",\"files_written\":$FILES_WRITTEN}"
 fi
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PHASE 3: INSTALL DEPENDENCIES (with devDep verification)
+# PHASE 4: INSTALL + VERIFY DEPENDENCIES
 # ═══════════════════════════════════════════════════════════════════════════════
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Phase 3: Installing Dependencies"
+echo "Phase 4: Installing & Verifying Dependencies"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-SETUP_LOG="$PROJECT_ROOT/setup.log"
-> "$SETUP_LOG"
 
-# Python: venv + pip install
+# Always run install if node_modules or venv is missing, even when resuming
+NEEDS_INSTALL=0
 while IFS= read -r req_file; do
     dir=$(dirname "$req_file")
-    echo "  [Python] $dir"
-    if [[ ! -d "$dir/venv" ]]; then
-        python3 -m venv "$dir/venv" >> "$SETUP_LOG" 2>&1
-    fi
-    "$dir/venv/bin/pip" install --quiet -r "$req_file" >> "$SETUP_LOG" 2>&1 \
-        && echo "  [Python] ✅ installed" \
-        || { echo "  [Python] ⚠️  install failed (check setup.log)"; cat "$SETUP_LOG" | tail -5; }
-done < <(find "$PROJECT_ROOT" -name "requirements.txt" \
-    -not -path "*/node_modules/*" -not -path "*/venv/*")
-
-# Node: install with --include=dev then verify critical packages
+    [[ ! -d "$dir/venv" ]] && NEEDS_INSTALL=1
+done < <(find "$PROJECT_ROOT" -name "requirements.txt" -not -path "*/node_modules/*" -not -path "*/venv/*")
 while IFS= read -r pkg_file; do
     dir=$(dirname "$pkg_file")
-    echo "  [Node]   $dir"
+    [[ ! -d "$dir/node_modules" ]] && NEEDS_INSTALL=1
+done < <(find "$PROJECT_ROOT" -name "package.json" -not -path "*/node_modules/*")
 
-    # Always install with dev dependencies
-    npm install --prefix "$dir" --include=dev >> "$SETUP_LOG" 2>&1
-    NPM_EXIT=$?
+if [[ "$LAST_PHASE" -ge 4 && $NEEDS_INSTALL -eq 0 ]]; then
+    skip_phase 4 "Install"
+else
+    > "$SETUP_LOG"
 
-    if [[ $NPM_EXIT -ne 0 ]]; then
-        echo "  [Node]   ⚠️  npm install failed"
-        tail -5 "$SETUP_LOG"
-    else
-        echo "  [Node]   ✅ npm install done"
-    fi
+    # Python venv + pip
+    while IFS= read -r req_file; do
+        dir=$(dirname "$req_file")
+        echo "  [Python] $dir"
+        [[ ! -d "$dir/venv" ]] && python3 -m venv "$dir/venv" >> "$SETUP_LOG" 2>&1
+        if "$dir/venv/bin/pip" install --quiet -r "$req_file" >> "$SETUP_LOG" 2>&1; then
+            echo "  [Python] ✅ installed"
+        else
+            echo "  [Python] ⚠️  install failed"; tail -5 "$SETUP_LOG"
+        fi
+    done < <(find "$PROJECT_ROOT" -name "requirements.txt" \
+        -not -path "*/node_modules/*" -not -path "*/venv/*")
 
-    # ── Critical: verify Vite plugin packages are actually in node_modules ──
-    # LLM sometimes puts @vitejs/plugin-react in devDependencies but older npm
-    # versions or NODE_ENV=production can skip them. Verify and fix explicitly.
-    python3 - "$dir" "$SETUP_LOG" << 'VERIFY_PY'
-import sys, os, subprocess, json
+    # Node: install devDeps, then verify critical packages exist
+    while IFS= read -r pkg_file; do
+        dir=$(dirname "$pkg_file")
+        echo "  [Node]   $dir"
+        if npm install --prefix "$dir" --include=dev >> "$SETUP_LOG" 2>&1; then
+            echo "  [Node]   ✅ npm install done"
+        else
+            echo "  [Node]   ⚠️  npm install issues"
+        fi
 
-fe_dir = sys.argv[1]
-log_file = sys.argv[2]
-
-# Read what package.json declared
-pkg_path = os.path.join(fe_dir, "package.json")
-if not os.path.exists(pkg_path):
-    sys.exit(0)
-
-with open(pkg_path) as f:
-    pkg = json.load(f)
-
-# Collect all declared packages (deps + devDeps)
-all_declared = {}
-all_declared.update(pkg.get("dependencies", {}))
-all_declared.update(pkg.get("devDependencies", {}))
-
-# Check which critical ones are missing
-critical = ["vite", "@vitejs/plugin-react", "@vitejs/plugin-react-swc"]
-missing = []
-for p in critical:
-    if p in all_declared:
-        node_mod = os.path.join(fe_dir, "node_modules", p)
-        if not os.path.isdir(node_mod):
-            missing.append(p)
-
+        # Verify + surgically fix missing critical packages
+        python3 - "$dir" "$SETUP_LOG" << 'VERIFY_PY'
+import sys,os,subprocess,json
+fe_dir,log_file=sys.argv[1],sys.argv[2]
+pkg_path=os.path.join(fe_dir,"package.json")
+if not os.path.exists(pkg_path): sys.exit(0)
+with open(pkg_path) as f: pkg=json.load(f)
+declared={**pkg.get("dependencies",{}),**pkg.get("devDependencies",{})}
+critical=[p for p in ["vite","@vitejs/plugin-react","@vitejs/plugin-react-swc"] if p in declared]
+missing=[p for p in critical if not os.path.isdir(os.path.join(fe_dir,"node_modules",p))]
 if missing:
-    print(f"  [Node]   ⚠️  Missing after install: {missing}")
-    print(f"  [Node]   Installing missing packages directly...")
-    with open(log_file, 'a') as lf:
-        r = subprocess.run(
-            ["npm", "install", "--save-dev"] + missing,
-            cwd=fe_dir, stdout=lf, stderr=lf
-        )
-    if r.returncode == 0:
-        print(f"  [Node]   ✅ Fixed missing packages")
-    else:
-        print(f"  [Node]   ❌ Could not install: {missing}")
+    print(f"  [Node]   ⚠️  Missing: {missing} — fixing with direct install...")
+    with open(log_file,'a') as lf:
+        subprocess.run(["npm","install","--save-dev"]+missing,cwd=fe_dir,stdout=lf,stderr=lf)
+    still=[p for p in missing if not os.path.isdir(os.path.join(fe_dir,"node_modules",p))]
+    if still: print(f"  [Node]   ❌ Still missing: {still}")
+    else:     print(f"  [Node]   ✅ Fixed missing packages: {missing}")
 else:
-    # Verify vite itself works
-    vite_bin = os.path.join(fe_dir, "node_modules", ".bin", "vite")
-    if os.path.exists(vite_bin):
-        print(f"  [Node]   ✅ All critical packages present")
-    else:
-        print(f"  [Node]   ⚠️  vite binary not found in .bin/")
+    print(f"  [Node]   ✅ All critical packages verified in node_modules")
 VERIFY_PY
 
-done < <(find "$PROJECT_ROOT" -name "package.json" \
-    -not -path "*/node_modules/*" -not -path "*/.next/*")
+    done < <(find "$PROJECT_ROOT" -name "package.json" \
+        -not -path "*/node_modules/*" -not -path "*/.next/*")
 
-# Generate start.sh and process manager
-python3 - "$PROJECT_ROOT" "$BACKEND_PORT" "$FRONTEND_PORT" << 'PYEOF'
-import os, sys, json, stat
-
-root        = sys.argv[1]
-backend_port = sys.argv[2]
-fe_port      = sys.argv[3]
-
-backend_dir = frontend_dir = None
-main_module = "main"
-
-for c in ["backend","api","server","app"]:
-    d = os.path.join(root, c)
-    if os.path.isdir(d) and any(f.endswith('.py') for f in os.listdir(d)):
-        backend_dir = c
-        for f in ["main.py","app.py","server.py"]:
-            if os.path.exists(os.path.join(d,f)):
-                main_module = f.replace(".py","")
-                break
-        break
-
-for c in ["frontend","client","web","ui"]:
-    d = os.path.join(root, c)
-    if os.path.isdir(d) and os.path.exists(os.path.join(d,"package.json")):
-        frontend_dir = c
-        break
-
-lines = [
-    "#!/bin/bash",
-    "# start.sh — Launch all services and show logs",
-    'ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
-    "cd \"$ROOT\"",
-    "echo 'Starting services...'",
-    "PIDS=()",
-    ""
-]
-
-if backend_dir:
-    venv_uv = f"{backend_dir}/venv/bin/uvicorn"
-    lines += [
-        "# ── Backend ──────────────────────────────────",
-        f'if [ -f "$ROOT/{venv_uv}" ]; then UVICORN="$ROOT/{venv_uv}"',
-        'elif command -v uvicorn &>/dev/null; then UVICORN="uvicorn"',
-        "else echo '⚠  uvicorn not found'; UVICORN=''; fi",
-        'if [ -n "$UVICORN" ]; then',
-        f'  pushd "$ROOT/{backend_dir}" > /dev/null',
-        f'  $UVICORN {main_module}:app --reload --port {backend_port} > "$ROOT/backend.log" 2>&1 &',
-        '  PIDS+=($!)',
-        f'  echo "✅ Backend  → http://localhost:{backend_port}"',
-        f'  echo "✅ API Docs → http://localhost:{backend_port}/docs"',
-        '  popd > /dev/null',
-        'fi', ''
-    ]
-
-if frontend_dir:
-    lines += [
-        "# ── Frontend ─────────────────────────────────",
-        f'pushd "$ROOT/{frontend_dir}" > /dev/null',
-        f'npm run dev > "$ROOT/frontend.log" 2>&1 &',
-        '  PIDS+=($!)',
-        f'  echo "✅ Frontend → http://localhost:{fe_port}"',
-        'popd > /dev/null', ''
-    ]
-
-lines += [
-    'echo ""',
-    'echo "Logs: tail -f $ROOT/backend.log  OR  $ROOT/frontend.log"',
-    'echo "Stop: Ctrl+C"',
-    'trap \'kill "${PIDS[@]}" 2>/dev/null; exit\' INT TERM',
-    'wait'
-]
-
-path = os.path.join(root, "start.sh")
-with open(path, 'w') as f:
-    f.write('\n'.join(lines) + '\n')
-os.chmod(path, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
-print(f"  ✅ start.sh generated (backend={backend_dir}, frontend={frontend_dir})")
-PYEOF
+    phase_done 4 '{"status":"ok"}'
+fi
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PHASE 4: STATIC VALIDATION
+# PHASE 5: STATIC PRE-FLIGHT (syntax + import + vite config checks)
 # ═══════════════════════════════════════════════════════════════════════════════
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Phase 4: Static Validation"
+echo "Phase 5: Static Pre-flight Checks"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-ATTEMPT=1; VALIDATION_PASSED=0
-while [[ $ATTEMPT -le $MAX_RETRIES ]]; do
-    echo "  [Validate] Attempt $ATTEMPT / $MAX_RETRIES"
-    "$SCRIPTS_DIR/validate.sh" "$PROJECT_ROOT"
-    if [[ $? -eq 0 ]]; then VALIDATION_PASSED=1; break; fi
+run_preflight() {
+    python3 "$SCRIPTS_DIR/preflight.py" "$PROJECT_ROOT"
+    return $?
+}
 
-    ERROR_LOG="$PROJECT_ROOT/errors.log"
-    if [[ ! -s "$ERROR_LOG" ]]; then VALIDATION_PASSED=1; break; fi
+if [[ "$LAST_PHASE" -ge 5 ]]; then
+    # Always re-run preflight even on resume — catches issues from prev debug iterations
+    echo "  (re-running — checks are fast)"
+fi
 
-    echo "  [Repair] Sending to $REPAIR_MODEL..."
-    SOURCE_FILES=""
-    while IFS= read -r -d '' f; do
-        rel="${f#$PROJECT_ROOT/}"
-        SOURCE_FILES+="FILE: $rel"$'\n'"$(cat "$f")"$'\n\n'
-    done < <(find "$PROJECT_ROOT" \( -name "*.py" -o -name "*.ts" -o -name "*.tsx" \) \
-        -not -path "*/node_modules/*" -not -path "*/venv/*" -print0 2>/dev/null)
+PREFLIGHT_ATTEMPTS=0
+PREFLIGHT_PASSED=0
 
-    REPAIR_PROMPT="$LOGS_DIR/repair_prompt_${ATTEMPT}.txt"
-    REPAIR_OUTPUT="$LOGS_DIR/repair_output_${ATTEMPT}.txt"
-    render_template "$PROMPTS_DIR/repair.txt" "$REPAIR_PROMPT" \
-        "ERROR_LOG=$(cat "$ERROR_LOG")" \
-        "FAILING_FILE_CONTENT=$SOURCE_FILES"
-    if ollama_call "$REPAIR_MODEL" "$REPAIR_PROMPT" "$REPAIR_OUTPUT" "Repair" 300; then
-        "$SCRIPTS_DIR/write_files.sh" "$REPAIR_OUTPUT" "$PROJECT_ROOT"
+while [[ $PREFLIGHT_ATTEMPTS -lt 2 ]]; do
+    run_preflight
+    PFRESULT=$?
+    if [[ $PFRESULT -eq 0 ]]; then
+        echo "  ✅ Pre-flight passed — no static errors"
+        PREFLIGHT_PASSED=1
+        break
     fi
-    ATTEMPT=$((ATTEMPT + 1))
-done
-echo ""
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# PHASE 5: LAUNCH SERVICES
-# ═══════════════════════════════════════════════════════════════════════════════
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Phase 5: Launching Services"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    PREFLIGHT_ATTEMPTS=$((PREFLIGHT_ATTEMPTS + 1))
+    PREFLIGHT_ERR="$PROJECT_ROOT/preflight_errors.log"
 
-# Kill any previous instances on our ports
-lsof -ti ":$BACKEND_PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
-lsof -ti ":$FRONTEND_PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
-sleep 1
+    if [[ $PREFLIGHT_ATTEMPTS -ge 2 ]]; then
+        echo "  ⚠️  Pre-flight issues remain after repair — continuing (runtime will confirm)"
+        break
+    fi
 
-BACKEND_LOG="$PROJECT_ROOT/backend.log"
-FRONTEND_LOG="$PROJECT_ROOT/frontend.log"
-> "$BACKEND_LOG"; > "$FRONTEND_LOG"
+    echo "  [PreFlight] Sending static errors to $REPAIR_MODEL..."
+    PF_CONTEXT=$(cat "$PREFLIGHT_ERR" 2>/dev/null)
 
-# Find and start backend
-BACKEND_PID=""
-FRONTEND_PID=""
+    # Build targeted repair context from preflight errors
+    PF_FILES=""
+    python3 - "$PREFLIGHT_ERR" "$PROJECT_ROOT" << 'PF_PY'
+import json, os, sys
+try:
+    with open(sys.argv[1]) as f: report=json.load(f)
+except: sys.exit(0)
+root=sys.argv[2]
+targets=set()
+for e in report.get("errors",[]):
+    f=e.get("file","")
+    if f: targets.add(os.path.join(root,f))
+for path in targets:
+    if os.path.exists(path):
+        rel=os.path.relpath(path,root)
+        content=open(path).read()
+        print(f"\nFILE_CONTENT: {rel}\n{content}")
+PF_PY
 
-for be_dir in backend api server app; do
-    if [[ -d "$PROJECT_ROOT/$be_dir" ]]; then
-        VENV_UV="$PROJECT_ROOT/$be_dir/venv/bin/uvicorn"
-        if [[ -f "$VENV_UV" ]]; then
-            MAIN_MOD=$(find "$PROJECT_ROOT/$be_dir" -maxdepth 2 -name "main.py" \
-                -not -path "*/venv/*" | head -1 | \
-                sed "s|$PROJECT_ROOT/$be_dir/||" | sed 's|\.py$||' | sed 's|/|.|g')
-            MAIN_MOD="${MAIN_MOD:-main}"
-            (cd "$PROJECT_ROOT/$be_dir" && \
-                "$VENV_UV" "$MAIN_MOD:app" --reload --port "$BACKEND_PORT" \
-                >> "$BACKEND_LOG" 2>&1) &
-            BACKEND_PID=$!
-            echo "  [Backend] Started PID $BACKEND_PID → http://localhost:$BACKEND_PORT"
+    PF_REPAIR_PROMPT="$LOGS_DIR/preflight_repair_${PREFLIGHT_ATTEMPTS}.txt"
+    PF_REPAIR_OUT="$LOGS_DIR/preflight_repair_out_${PREFLIGHT_ATTEMPTS}.txt"
+
+    cat > "$PF_REPAIR_PROMPT" << PFPROMPT
+You are a code repair expert. Fix the following static analysis errors found before launch.
+Output ONLY fixed files using FILE: format. No markdown, no explanation.
+
+ERRORS:
+$PF_CONTEXT
+
+$PF_FILES
+
+For each error listed, output the complete fixed file content as:
+FILE: relative/path/to/file.ext
+<complete fixed content — no truncation>
+PFPROMPT
+
+    PF_REPAIR_OK=0
+    if ollama_call "$REPAIR_MODEL" "$PF_REPAIR_PROMPT" "$PF_REPAIR_OUT" "PreFlight-Repair" 180; then
+        PF_REPAIR_OK=1
+    elif ollama_call "$REPAIR_FALLBACK" "$PF_REPAIR_PROMPT" "$PF_REPAIR_OUT" "PreFlight-Fallback" 180; then
+        PF_REPAIR_OK=1
+    fi
+    if [[ $PF_REPAIR_OK -eq 1 ]]; then
+        echo "  [PreFlight] Applying fixes..."
+        "$SCRIPTS_DIR/write_files.sh" "$PF_REPAIR_OUT" "$PROJECT_ROOT"
+        # Reinstall if package.json was fixed
+        if grep -q "package.json" "$PF_REPAIR_OUT" 2>/dev/null; then
+            for fe_dir in frontend client web ui; do
+                if [[ -d "$PROJECT_ROOT/$fe_dir" ]]; then
+                    npm install --prefix "$PROJECT_ROOT/$fe_dir" --include=dev >> "$SETUP_LOG" 2>&1
+                fi
+            done
         fi
-        break
     fi
 done
 
-# Find and start frontend
-for fe_dir in frontend client web ui; do
-    if [[ -d "$PROJECT_ROOT/$fe_dir" && -f "$PROJECT_ROOT/$fe_dir/package.json" ]]; then
-        (cd "$PROJECT_ROOT/$fe_dir" && npm run dev >> "$FRONTEND_LOG" 2>&1) &
-        FRONTEND_PID=$!
-        echo "  [Frontend] Started PID $FRONTEND_PID → http://localhost:$FRONTEND_PORT"
-        break
-    fi
-done
+phase_done 5 "{\"status\":\"ok\",\"preflight_passed\":$PREFLIGHT_PASSED}"
+echo ""
 
-# Health check both services
+# ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 6: LAUNCH SERVICES
+# ═══════════════════════════════════════════════════════════════════════════════
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "Phase 6: Launching Services"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# Check if services are already running (resume case)
+SERVICES_RUNNING=0
+if [[ "$LAST_PHASE" -ge 6 ]]; then
+    if pm status "$PROJECT_ROOT" 2>/dev/null | grep -q "running"; then
+        echo "  Services already running (from previous run)"
+        SERVICES_RUNNING=1
+    fi
+fi
+
+if [[ $SERVICES_RUNNING -eq 0 ]]; then
+    pm start "$PROJECT_ROOT" "$BACKEND_PORT" "$FRONTEND_PORT"
+fi
+
 echo "  Waiting for services to be ready..."
-python3 - "$BACKEND_PORT" "$FRONTEND_PORT" "$BACKEND_LOG" "$FRONTEND_LOG" << 'HEALTH_PY'
-import sys, time, urllib.request, urllib.error
+python3 - "$BACKEND_PORT" "$FRONTEND_PORT" \
+    "$PROJECT_ROOT/backend.log" "$PROJECT_ROOT/frontend.log" << 'HEALTH_PY'
+import sys,time,urllib.request,urllib.error
+be_port,fe_port=sys.argv[1],sys.argv[2]
+be_log,fe_log=sys.argv[3],sys.argv[4]
 
-backend_port  = sys.argv[1]
-frontend_port = sys.argv[2]
-backend_log   = sys.argv[3]
-frontend_log  = sys.argv[4]
-
-def wait_for(url, name, timeout=45):
-    start = time.time()
-    last_error = ""
-    while time.time() - start < timeout:
+def wait_for(url, name, log, timeout=60):
+    start=time.time()
+    last=""
+    while time.time()-start<timeout:
         try:
-            r = urllib.request.urlopen(url, timeout=2)
-            print(f"  ✅ {name} is up ({r.status}) at {url}")
-            return True
+            r=urllib.request.urlopen(url,timeout=2)
+            print(f"  ✅ {name} ready ({r.status})"); return True
         except urllib.error.HTTPError as e:
-            # 404 still means the server is running (FastAPI returns 404 on /)
-            if e.code in (404, 405, 422):
-                print(f"  ✅ {name} is up ({e.code}) at {url}")
-                return True
-            last_error = str(e)
+            if e.code in (404,405,422,307):
+                print(f"  ✅ {name} ready ({e.code})"); return True
+            last=str(e)
         except Exception as e:
-            last_error = str(e)
+            last=str(e)
         time.sleep(1)
-    print(f"  ❌ {name} did not start within {timeout}s. Last error: {last_error}")
+    print(f"  ❌ {name} timed out. Last: {last}")
+    try:
+        lines=open(log).readlines()
+        for l in lines[-12:]: print("    "+l.rstrip())
+    except: pass
     return False
 
-backend_up  = wait_for(f"http://localhost:{backend_port}/",  "Backend",  45)
-frontend_up = wait_for(f"http://localhost:{frontend_port}/", "Frontend", 60)
-
-if not backend_up:
-    print("  Backend logs (last 20 lines):")
-    try:
-        with open(backend_log) as f:
-            lines = f.readlines()
-        for line in lines[-20:]:
-            print("    " + line.rstrip())
-    except: pass
-
-if not frontend_up:
-    print("  Frontend logs (last 20 lines):")
-    try:
-        with open(frontend_log) as f:
-            lines = f.readlines()
-        for line in lines[-20:]:
-            print("    " + line.rstrip())
-    except: pass
-
-# Exit codes: 0=both up, 1=backend down, 2=frontend down, 3=both down
-code = (0 if backend_up else 1) + (0 if frontend_up else 2)
-sys.exit(code)
+be_up=wait_for(f"http://localhost:{be_port}/docs","Backend(docs)",be_log,60)
+if not be_up:
+    be_up=wait_for(f"http://localhost:{be_port}/","Backend",be_log,10)
+fe_up=wait_for(f"http://localhost:{fe_port}/","Frontend",fe_log,90)
+sys.exit(0 if (be_up and fe_up) else 1)
 HEALTH_PY
-HEALTH_EXIT=$?
+LAUNCH_OK=$?
+
+if [[ $LAUNCH_OK -eq 0 ]]; then
+    phase_done 6 '{"status":"ok"}'
+else
+    phase_done 6 '{"status":"partial"}'
+    echo "  ⚠️  One or more services failed to start — UAT will diagnose"
+fi
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PHASE 6: UAT (automated tests against running services)
+# PHASE 7: CONTRACT-DRIVEN UAT
 # ═══════════════════════════════════════════════════════════════════════════════
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Phase 6: User Acceptance Testing (UAT)"
+echo "Phase 7: Contract-Driven UAT"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Contract: $(jq '.backend.endpoints|length' "$CONTRACT_FILE") API tests + $(jq '.frontend.checks|length' "$CONTRACT_FILE") frontend checks"
+echo ""
 
-UAT_REPORT="$PROJECT_ROOT/uat_report.json"
-UAT_PASSED=0
-
-python3 - "$BACKEND_PORT" "$FRONTEND_PORT" "$UAT_REPORT" << 'UAT_PY'
-import sys, json, urllib.request, urllib.error, time
-
-backend_port  = sys.argv[1]
-frontend_port = sys.argv[2]
-report_path   = sys.argv[3]
-backend_url   = f"http://localhost:{backend_port}"
-frontend_url  = f"http://localhost:{frontend_port}"
-
-results = []
-
-def test(name, method, url, body=None, expect=(200,201,204)):
-    try:
-        data = json.dumps(body).encode() if body else None
-        headers = {"Content-Type":"application/json"} if body else {}
-        req = urllib.request.Request(url, data=data, headers=headers, method=method)
-        r = urllib.request.urlopen(req, timeout=8)
-        resp_body = r.read()
-        try: resp_body = json.loads(resp_body)
-        except: resp_body = resp_body.decode('utf-8','replace')[:200]
-        ok = r.status in (expect if isinstance(expect, tuple) else (expect,))
-        results.append({"name":name,"status":r.status,"ok":ok,"body":resp_body})
-        icon = "✅" if ok else "❌"
-        print(f"  {icon} [{r.status}] {name}")
-        return resp_body
-    except urllib.error.HTTPError as e:
-        ok = e.code in (expect if isinstance(expect, tuple) else (expect,))
-        results.append({"name":name,"status":e.code,"ok":ok,"error":str(e)})
-        icon = "✅" if ok else "❌"
-        print(f"  {icon} [{e.code}] {name}: {e}")
-        return None
-    except Exception as e:
-        results.append({"name":name,"status":0,"ok":False,"error":str(e)})
-        print(f"  ❌ [ERR] {name}: {e}")
-        return None
-
-print("  ── Backend API Tests ──────────────────────")
-
-# Docs endpoint
-test("GET /docs (API docs accessible)", "GET", f"{backend_url}/docs", expect=(200,))
-
-# CRUD lifecycle
-test("GET /todos (initial empty list)",  "GET",    f"{backend_url}/todos",        expect=(200,))
-item = test("POST /todos (create item)", "POST",   f"{backend_url}/todos",
-            {"title": "UAT Test Item"}, expect=(200,201))
-todo_id = item.get("id") if isinstance(item, dict) else None
-if todo_id:
-    test("GET /todos (item in list)",    "GET",    f"{backend_url}/todos",        expect=(200,))
-    test(f"DELETE /todos/{todo_id}",     "DELETE", f"{backend_url}/todos/{todo_id}", expect=(200,204))
-    test("GET /todos (empty after del)", "GET",    f"{backend_url}/todos",        expect=(200,))
-else:
-    print("  ⚠️  Skipping DELETE test: no ID returned from POST")
-
-print("")
-print("  ── Frontend Tests ─────────────────────────")
-
-# Frontend loads
-fe_result = test("GET / (frontend loads)", "GET", f"{frontend_url}/", expect=(200,))
-if isinstance(fe_result, str):
-    if "<div" in fe_result or "<!DOCTYPE" in fe_result or "html" in fe_result.lower():
-        print("  ✅ Frontend HTML response contains HTML markup")
-    else:
-        print("  ⚠️  Frontend response doesn't look like HTML")
-
-# Save report
-with open(report_path, 'w') as f:
-    json.dump(results, f, indent=2)
-
-passed = sum(1 for r in results if r["ok"])
-total  = len(results)
-print(f"\n  UAT Result: {passed}/{total} tests passed")
-
-sys.exit(0 if passed == total else 1)
-UAT_PY
+python3 "$SCRIPTS_DIR/uat_runner.py" "$CONTRACT_FILE" "$UAT_REPORT"
 UAT_EXIT=$?
+UAT_PASSED=$([[ $UAT_EXIT -eq 0 ]] && echo 1 || echo 0)
 
-if [[ $UAT_EXIT -eq 0 ]]; then
-    UAT_PASSED=1
+if [[ $UAT_PASSED -eq 1 ]]; then
+    phase_done 7 '{"status":"ok","all_pass":true}'
     echo ""
     echo "  ✅ All UAT tests passed!"
 else
+    phase_done 7 '{"status":"failed"}'
     echo ""
-    echo "  ⚠️  Some UAT tests failed."
+    echo "  ⚠️  UAT failures detected — entering debug loop"
 fi
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PHASE 7: INTERACTIVE DEBUG LOOP (if UAT failed)
+# PHASE 8: TARGETED DEBUG LOOP
 # ═══════════════════════════════════════════════════════════════════════════════
+DEBUG_ITERATIONS=$(state_get "debug_iterations" "0")
+
 if [[ $UAT_PASSED -eq 0 ]]; then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "Phase 7: Debug & Repair Loop"
+    echo "Phase 8: Targeted Debug Loop"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    DEBUG_ATTEMPT=1
-    DEBUG_MAX=3
+    # On resume: start from where we left off (don't repeat already-tried fixes)
+    START_ITER=$((DEBUG_ITERATIONS + 1))
+    MAX_ITER=3
 
-    while [[ $DEBUG_ATTEMPT -le $DEBUG_MAX && $UAT_PASSED -eq 0 ]]; do
+    if [[ $DEBUG_ITERATIONS -ge $MAX_ITER ]]; then
+        echo "  ⚠️  Already ran $DEBUG_ITERATIONS debug iterations — manual intervention needed"
+        echo "  Check: tail -f $PROJECT_ROOT/backend.log"
+        echo "  Check: tail -f $PROJECT_ROOT/frontend.log"
+    fi
+
+    for DEBUG_ITER in $(seq $START_ITER $MAX_ITER); do
+        [[ $UAT_PASSED -eq 1 ]] && break
+
         echo ""
-        echo "  [Debug] Iteration $DEBUG_ATTEMPT / $DEBUG_MAX"
+        echo "  ┌─────────────────────────────────────────┐"
+        echo "  │  Debug iteration $DEBUG_ITER / $MAX_ITER                 │"
+        echo "  └─────────────────────────────────────────┘"
 
-        # ── Collect all error context ──────────────────────────────────────
-        BACKEND_ERRORS=$(tail -30 "$BACKEND_LOG" 2>/dev/null || echo "No backend log")
-        FRONTEND_ERRORS=$(tail -30 "$FRONTEND_LOG" 2>/dev/null || echo "No frontend log")
-        UAT_FAILURES=$(python3 -c "
-import json, sys
-try:
-    with open(sys.argv[1]) as f:
-        results = json.load(f)
-    failed = [r for r in results if not r.get('ok')]
-    print(json.dumps(failed, indent=2))
-except: print('No UAT report')
-" "$UAT_REPORT" 2>/dev/null)
+        # ── Step A: structured repair context ────────────────────────────────
+        echo "  [Debug $DEBUG_ITER/A] Categorizing failures..."
+        python3 "$SCRIPTS_DIR/repair_planner.py" \
+            "$UAT_REPORT" "$PROJECT_ROOT" "$REPAIR_CONTEXT"
 
-        # Collect source files
-        SOURCE_FILES=""
-        while IFS= read -r -d '' f; do
-            rel="${f#$PROJECT_ROOT/}"
-            SOURCE_FILES+="FILE: $rel"$'\n'"$(cat "$f")"$'\n\n'
-        done < <(find "$PROJECT_ROOT" \
-            \( -name "*.py" -o -name "*.ts" -o -name "*.tsx" -o -name "*.js" \) \
-            -not -path "*/node_modules/*" -not -path "*/venv/*" \
-            -not -path "*/__pycache__/*" -print0 2>/dev/null)
+        # Append runtime logs + iteration history
+        {
+            echo ""
+            echo "=== Backend Runtime Log (last 40 lines) ==="
+            tail -40 "$PROJECT_ROOT/backend.log" 2>/dev/null || echo "(empty)"
+            echo ""
+            echo "=== Frontend Runtime Log (last 40 lines) ==="
+            tail -40 "$PROJECT_ROOT/frontend.log" 2>/dev/null || echo "(empty)"
+            echo ""
+            if [[ $DEBUG_ITER -gt 1 ]]; then
+                echo "=== Previous Fix Attempts (do NOT repeat these) ==="
+                for prev in $(seq 1 $((DEBUG_ITER-1))); do
+                    echo "--- Iteration $prev: files changed ---"
+                    grep "^FILE:" "$LOGS_DIR/debug_output_${prev}.txt" 2>/dev/null || echo "(none)"
+                    echo "--- Iteration $prev: UAT result ---"
+                    jq -r '.failures[].test' "$UAT_REPORT" 2>/dev/null | head -5 || echo "(no report)"
+                done
+            fi
+        } >> "$REPAIR_CONTEXT"
 
-        ERROR_CONTEXT="=== Backend Logs ===
-$BACKEND_ERRORS
-
-=== Frontend Logs ===
-$FRONTEND_ERRORS
-
-=== Failed UAT Tests ===
-$UAT_FAILURES"
-
-        echo "  [Debug] Sending error context to $REPAIR_MODEL..."
-
-        DEBUG_PROMPT="$LOGS_DIR/debug_prompt_${DEBUG_ATTEMPT}.txt"
-        DEBUG_OUTPUT="$LOGS_DIR/debug_output_${DEBUG_ATTEMPT}.txt"
+        # ── Step B: repair model ──────────────────────────────────────────────
+        DEBUG_PROMPT="$LOGS_DIR/debug_prompt_${DEBUG_ITER}.txt"
+        DEBUG_OUTPUT="$LOGS_DIR/debug_output_${DEBUG_ITER}.txt"
 
         render_template "$PROMPTS_DIR/debug.txt" "$DEBUG_PROMPT" \
-            "ERROR_CONTEXT=$ERROR_CONTEXT" \
-            "SOURCE_FILES=$SOURCE_FILES" \
+            "ERROR_CONTEXT=$(cat "$REPAIR_CONTEXT")" \
+            "SOURCE_FILES=" \
             "BACKEND_PORT=$BACKEND_PORT" \
             "FRONTEND_PORT=$FRONTEND_PORT"
 
-        if ! ollama_call "$REPAIR_MODEL" "$DEBUG_PROMPT" "$DEBUG_OUTPUT" "Debug" 300; then
-            echo "  [Debug] Repair agent failed, skipping iteration"
-            DEBUG_ATTEMPT=$((DEBUG_ATTEMPT + 1))
+        echo "  [Debug $DEBUG_ITER/B] Calling $REPAIR_MODEL..."
+        REPAIR_OK=0
+        if ollama_call "$REPAIR_MODEL" "$DEBUG_PROMPT" "$DEBUG_OUTPUT" "Debug-$DEBUG_ITER" 300; then
+            REPAIR_OK=1
+        else
+            echo "  [Debug $DEBUG_ITER] $REPAIR_MODEL failed — trying fallback $REPAIR_FALLBACK..."
+            if ollama_call "$REPAIR_FALLBACK" "$DEBUG_PROMPT" "$DEBUG_OUTPUT" "Debug-$DEBUG_ITER-fallback" 240; then
+                REPAIR_OK=1
+                echo "  [Debug $DEBUG_ITER] Fallback model succeeded"
+            fi
+        fi
+        if [[ $REPAIR_OK -eq 0 ]]; then
+            echo "  [Debug $DEBUG_ITER] All repair models failed — skipping iteration"
+            DEBUG_ITERATIONS=$DEBUG_ITER
+            state_set "debug_iterations" "$DEBUG_ITERATIONS"
             continue
         fi
 
-        # Apply fixes
-        echo "  [Debug] Applying fixes..."
+        FILES_FIXED=$(grep -c "^FILE:" "$DEBUG_OUTPUT" 2>/dev/null || echo 0)
+        echo "  [Debug $DEBUG_ITER/C] Applying $FILES_FIXED fix(es)..."
         "$SCRIPTS_DIR/write_files.sh" "$DEBUG_OUTPUT" "$PROJECT_ROOT"
+        echo "  [Debug $DEBUG_ITER/C] Validating written files..."
+        python3 "$SCRIPTS_DIR/validate_written_files.py" "$PROJECT_ROOT"
 
-        # Re-install deps if package.json changed
-        for fe_dir in frontend client web ui; do
-            if [[ -d "$PROJECT_ROOT/$fe_dir" && \
-                  "$PROJECT_ROOT/$fe_dir/package.json" -nt \
-                  "$PROJECT_ROOT/$fe_dir/node_modules/.package-lock.json" ]] 2>/dev/null; then
-                echo "  [Debug] package.json changed, reinstalling..."
-                npm install --prefix "$PROJECT_ROOT/$fe_dir" --include=dev >> "$SETUP_LOG" 2>&1
-            fi
-        done
-
-        # Restart services
-        echo "  [Debug] Restarting services..."
-        [[ -n "$BACKEND_PID" ]]  && kill "$BACKEND_PID"  2>/dev/null
-        [[ -n "$FRONTEND_PID" ]] && kill "$FRONTEND_PID" 2>/dev/null
-        lsof -ti ":$BACKEND_PORT"  2>/dev/null | xargs kill -9 2>/dev/null || true
-        lsof -ti ":$FRONTEND_PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
-        sleep 2
-
-        > "$BACKEND_LOG"; > "$FRONTEND_LOG"
-
-        for be_dir in backend api server app; do
-            if [[ -d "$PROJECT_ROOT/$be_dir" ]]; then
-                VENV_UV="$PROJECT_ROOT/$be_dir/venv/bin/uvicorn"
-                if [[ -f "$VENV_UV" ]]; then
-                    MAIN_MOD=$(find "$PROJECT_ROOT/$be_dir" -maxdepth 2 -name "main.py" \
-                        -not -path "*/venv/*" | head -1 | \
-                        sed "s|$PROJECT_ROOT/$be_dir/||" | sed 's|\.py$||')
-                    MAIN_MOD="${MAIN_MOD:-main}"
-                    (cd "$PROJECT_ROOT/$be_dir" && \
-                        "$VENV_UV" "$MAIN_MOD:app" --reload --port "$BACKEND_PORT" \
-                        >> "$BACKEND_LOG" 2>&1) &
-                    BACKEND_PID=$!
+        # ── Step C: reinstall if package.json changed ─────────────────────────
+        if grep -q "package.json" "$DEBUG_OUTPUT" 2>/dev/null; then
+            echo "  [Debug $DEBUG_ITER] package.json changed — reinstalling..."
+            for fe_dir in frontend client web ui; do
+                if [[ -d "$PROJECT_ROOT/$fe_dir" ]]; then
+                    npm install --prefix "$PROJECT_ROOT/$fe_dir" --include=dev >> "$SETUP_LOG" 2>&1
+                    python3 - "$PROJECT_ROOT/$fe_dir" "$SETUP_LOG" << 'FIX_PY'
+import sys,os,subprocess,json
+d,log=sys.argv[1],sys.argv[2]
+pkg=os.path.join(d,"package.json")
+if not os.path.exists(pkg): sys.exit(0)
+with open(pkg) as f: p=json.load(f)
+decl={**p.get("dependencies",{}),**p.get("devDependencies",{})}
+miss=[x for x in ["vite","@vitejs/plugin-react"] if x in decl
+      and not os.path.isdir(os.path.join(d,"node_modules",x))]
+if miss:
+    with open(log,'a') as lf:
+        subprocess.run(["npm","install","--save-dev"]+miss,cwd=d,stdout=lf,stderr=lf)
+    print(f"  [Node] Fixed: {miss}")
+FIX_PY
                 fi
-                break
-            fi
-        done
-        for fe_dir in frontend client web ui; do
-            if [[ -d "$PROJECT_ROOT/$fe_dir" && -f "$PROJECT_ROOT/$fe_dir/package.json" ]]; then
-                (cd "$PROJECT_ROOT/$fe_dir" && npm run dev >> "$FRONTEND_LOG" 2>&1) &
-                FRONTEND_PID=$!
-                break
-            fi
-        done
+            done
+        fi
 
-        echo "  [Debug] Waiting for services..."
-        sleep 5
+        # ── Step D: re-run preflight to catch any new syntax errors ──────────
+        echo "  [Debug $DEBUG_ITER/D] Quick pre-flight check..."
+        if ! python3 "$SCRIPTS_DIR/preflight.py" "$PROJECT_ROOT" 2>/dev/null; then
+            echo "  [Debug $DEBUG_ITER] Pre-flight still failing — restart may not help"
+        fi
 
-        # Re-run UAT
-        echo "  [Debug] Re-running UAT..."
-        python3 - "$BACKEND_PORT" "$FRONTEND_PORT" "$UAT_REPORT" << 'REUAT_PY'
-import sys, json, urllib.request, urllib.error
+        # ── Step E: restart only affected service ─────────────────────────────
+        BACKEND_CHANGED=$(grep -c "^FILE:.*backend\|^FILE:.*main\.py\|^FILE:.*requirements" \
+            "$DEBUG_OUTPUT" 2>/dev/null || echo 0)
+        FRONTEND_CHANGED=$(grep -c "^FILE:.*frontend\|^FILE:.*package\.json\|^FILE:.*vite\.config" \
+            "$DEBUG_OUTPUT" 2>/dev/null || echo 0)
 
-backend_port  = sys.argv[1]
-frontend_port = sys.argv[2]
-report_path   = sys.argv[3]
-backend_url   = f"http://localhost:{backend_port}"
-frontend_url  = f"http://localhost:{frontend_port}"
+        echo "  [Debug $DEBUG_ITER/E] Restarting (backend=$BACKEND_CHANGED frontend=$FRONTEND_CHANGED files changed)..."
+        pm restart "$PROJECT_ROOT" "$BACKEND_PORT" "$FRONTEND_PORT"
 
-results = []
-def test(name, method, url, body=None, expect=(200,201,204)):
+        echo "  [Debug $DEBUG_ITER] Waiting for restart..."
+        python3 - "$BACKEND_PORT" "$FRONTEND_PORT" \
+            "$PROJECT_ROOT/backend.log" "$PROJECT_ROOT/frontend.log" << 'RESTART_HEALTH'
+import sys,time,urllib.request,urllib.error
+be,fe=sys.argv[1],sys.argv[2]
+be_log,fe_log=sys.argv[3],sys.argv[4]
+def wait(url,name,log,t=45):
+    start=time.time()
+    while time.time()-start<t:
+        try:
+            r=urllib.request.urlopen(url,timeout=2); return True
+        except urllib.error.HTTPError as e:
+            if e.code in (404,405,422): return True
+        except: pass
+        time.sleep(1)
+    print(f"  ❌ {name} still down")
     try:
-        data = json.dumps(body).encode() if body else None
-        headers = {"Content-Type":"application/json"} if body else {}
-        req = urllib.request.Request(url, data=data, headers=headers, method=method)
-        r = urllib.request.urlopen(req, timeout=8)
-        resp_body = r.read()
-        try: resp_body = json.loads(resp_body)
-        except: resp_body = resp_body.decode('utf-8','replace')[:200]
-        ok = r.status in (expect if isinstance(expect, tuple) else (expect,))
-        results.append({"name":name,"status":r.status,"ok":ok,"body":resp_body})
-        icon = "✅" if ok else "❌"
-        print(f"  {icon} [{r.status}] {name}")
-        return resp_body
-    except urllib.error.HTTPError as e:
-        ok = e.code in (expect if isinstance(expect, tuple) else (expect,))
-        results.append({"name":name,"status":e.code,"ok":ok,"error":str(e)})
-        icon = "✅" if ok else "❌"
-        print(f"  {icon} [{e.code}] {name}")
-        return None
-    except Exception as e:
-        results.append({"name":name,"status":0,"ok":False,"error":str(e)})
-        print(f"  ❌ [ERR] {name}: {e}")
-        return None
+        for l in open(log).readlines()[-6:]: print("    "+l.rstrip())
+    except: pass
+    return False
+wait(f"http://localhost:{be}/docs","Backend(docs)",be_log,45)
+wait(f"http://localhost:{fe}/","Frontend",fe_log,60)
+RESTART_HEALTH
 
-test("GET /docs",                 "GET", f"{backend_url}/docs",    expect=(200,))
-test("GET /todos",                "GET", f"{backend_url}/todos",   expect=(200,))
-item = test("POST /todos",        "POST",f"{backend_url}/todos",   {"title":"Retest Item"}, expect=(200,201))
-tid = item.get("id") if isinstance(item,dict) else None
-if tid:
-    test(f"DELETE /todos/{tid}",  "DELETE",f"{backend_url}/todos/{tid}", expect=(200,204))
-test("GET / (frontend)",          "GET", f"{frontend_url}/",       expect=(200,))
-
-with open(report_path,'w') as f:
-    json.dump(results, f, indent=2)
-passed = sum(1 for r in results if r["ok"])
-total  = len(results)
-print(f"  UAT: {passed}/{total} passed")
-sys.exit(0 if passed==total else 1)
-REUAT_PY
+        # ── Step F: re-run UAT ────────────────────────────────────────────────
+        echo "  [Debug $DEBUG_ITER/F] Re-running UAT..."
+        python3 "$SCRIPTS_DIR/uat_runner.py" "$CONTRACT_FILE" "$UAT_REPORT"
         REUAT_EXIT=$?
+
+        DEBUG_ITERATIONS=$DEBUG_ITER
+        state_set "debug_iterations" "$DEBUG_ITERATIONS"
 
         if [[ $REUAT_EXIT -eq 0 ]]; then
             UAT_PASSED=1
-            echo "  ✅ All tests pass after debug iteration $DEBUG_ATTEMPT!"
+            phase_done 8 "{\"status\":\"ok\",\"iterations\":$DEBUG_ITERATIONS}"
+            echo ""
+            echo "  ✅ All tests pass after debug iteration $DEBUG_ITER!"
         else
-            echo "  Still failing after iteration $DEBUG_ATTEMPT"
+            REMAINING=$(python3 -c "
+import json; r=json.load(open('$UAT_REPORT'))
+f=[x['test'] for x in r.get('failures',[])]
+print(f'Still failing ({len(f)}): {f}')" 2>/dev/null)
+            echo "  $REMAINING"
+            phase_done 8 "{\"status\":\"partial\",\"iterations\":$DEBUG_ITERATIONS}"
         fi
-
-        DEBUG_ATTEMPT=$((DEBUG_ATTEMPT + 1))
     done
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# GENERATE start.sh for manual re-launch
+# ═══════════════════════════════════════════════════════════════════════════════
+python3 - "$PROJECT_ROOT" "$BACKEND_PORT" "$FRONTEND_PORT" "$SCRIPT_DIR" << 'STARTPY'
+import os,sys,stat
+root,be_port,fe_port,script_dir=sys.argv[1],sys.argv[2],sys.argv[3],sys.argv[4]
+be_dir=fe_dir=""; main_mod="main"
+for c in ["backend","api","server"]:
+    d=os.path.join(root,c)
+    if os.path.isdir(d) and any(f.endswith('.py') for f in os.listdir(d)):
+        be_dir=c
+        for f in ["main.py","app.py"]:
+            if os.path.exists(os.path.join(d,f)): main_mod=f.replace(".py",""); break
+        break
+for c in ["frontend","client","web"]:
+    d=os.path.join(root,c)
+    if os.path.isdir(d) and os.path.exists(os.path.join(d,"package.json")):
+        fe_dir=c; break
+pm=os.path.join(script_dir,"scripts","process_manager.py")
+content=f"""#!/bin/bash
+# start.sh — Re-launch all autodev services
+ROOT="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
+python3 "{pm}" start "$ROOT" {be_port} {fe_port}
+echo ""
+echo "  Backend:  http://localhost:{be_port}"
+echo "  API Docs: http://localhost:{be_port}/docs"
+echo "  Frontend: http://localhost:{fe_port}"
+echo "  Logs:     tail -f $ROOT/backend.log | $ROOT/frontend.log"
+"""
+path=os.path.join(root,"start.sh")
+with open(path,'w') as f: f.write(content)
+os.chmod(path,stat.S_IRWXU|stat.S_IRGRP|stat.S_IXGRP|stat.S_IROTH|stat.S_IXOTH)
+STARTPY
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # FINAL SUMMARY
 # ═══════════════════════════════════════════════════════════════════════════════
-
-# Ensure services are still running (don't kill them — user needs them)
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "╔══════════════════════════════════════════╗"
 if [[ $UAT_PASSED -eq 1 ]]; then
-    echo "║   ✅  Build + UAT COMPLETE — All Green   ║"
+    echo "║   ✅  All Systems Green — UAT Passed     ║"
+elif [[ $DEBUG_ITERATIONS -gt 0 ]]; then
+    echo "║   ⚠️   Built — UAT partial ($DEBUG_ITERATIONS/$MAX_RETRIES debug runs)  ║"
 else
-    echo "║   ⚠️   Build done — UAT needs attention   ║"
+    echo "║   ⚠️   Built — UAT incomplete            ║"
 fi
 echo "╚══════════════════════════════════════════╝"
 echo ""
-echo "📁  Project:  $PROJECT_ROOT"
+echo "  📁  Project:      $PROJECT_ROOT"
+echo "  📋  Contract:     $CONTRACT_FILE"
+echo "  📊  UAT report:   $UAT_REPORT"
+echo "  💾  State file:   $STATE_FILE"
 echo ""
-echo "Generated files:"
+echo "  Generated files:"
 find "$PROJECT_ROOT" -type f \
     -not -path "*/node_modules/*" -not -path "*/venv/*" \
     -not -path "*/__pycache__/*"  -not -name "*.pyc" \
-    | sort | sed "s|$PROJECT_ROOT/||" | sed 's/^/   /'
+    | sort | sed "s|$PROJECT_ROOT/||" | sed 's/^/     /'
 echo ""
-if [[ -n "$BACKEND_PID" || -n "$FRONTEND_PID" ]]; then
-    echo "🟢  Services are RUNNING:"
-    [[ -n "$BACKEND_PID" ]]  && echo "    Backend:  http://localhost:$BACKEND_PORT"
-    [[ -n "$BACKEND_PID" ]]  && echo "    API Docs: http://localhost:$BACKEND_PORT/docs"
-    [[ -n "$FRONTEND_PID" ]] && echo "    Frontend: http://localhost:$FRONTEND_PORT"
+
+if pm status "$PROJECT_ROOT" 2>/dev/null | grep -q "running"; then
+    echo "  🟢  Services running:"
+    echo "       Backend:   http://localhost:$BACKEND_PORT"
+    echo "       API Docs:  http://localhost:$BACKEND_PORT/docs"
+    echo "       Frontend:  http://localhost:$FRONTEND_PORT"
     echo ""
-    echo "    Logs:     tail -f $PROJECT_ROOT/backend.log"
-    echo "              tail -f $PROJECT_ROOT/frontend.log"
-    echo ""
-    echo "    To stop:  kill $BACKEND_PID $FRONTEND_PID"
-    echo "    To restart: cd $PROJECT_ROOT && ./start.sh"
-else
-    echo "▶  To start: cd $PROJECT_ROOT && ./start.sh"
+    echo "       Logs:      tail -f $PROJECT_ROOT/backend.log"
+    echo "                  tail -f $PROJECT_ROOT/frontend.log"
+    echo "       Stop:      python3 $SCRIPTS_DIR/process_manager.py stop $PROJECT_ROOT"
+    echo "       Restart:   ./start.sh"
 fi
+
 echo ""
-[[ -f "$UAT_REPORT" ]] && echo "📋  UAT report: $UAT_REPORT"
+echo "  Re-run UAT:   python3 $SCRIPTS_DIR/uat_runner.py $CONTRACT_FILE $UAT_REPORT"
+echo "  Resume build: $0 \"$TASK\""
+if [[ $UAT_PASSED -eq 0 ]]; then
+    echo ""
+    echo "  ⚠️  Failed tests:"
+    jq -r '.failures[] | "     [\(.category)] \(.test): \(.actual)"' \
+        "$UAT_REPORT" 2>/dev/null || true
+fi
 echo ""
 [[ $UAT_PASSED -eq 1 ]] && exit 0 || exit 1

@@ -1,173 +1,68 @@
-FILE: frontend/package.json
-```json
-{
-  "name": "todoapp",
-  "version": "0.1.0",
-  "private": true,
-  "dependencies": {
-    "react": "^17.0.2",
-    "react-dom": "^17.0.2"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-react": "^1.3.5",
-    "vite": "^2.9.6"
-  },
-  "scripts": {
-    "start": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
-  }
-}
-```
-
-FILE: frontend/vite.config.ts
-```typescript
-import { defineConfig } from 'vite';
-import reactRefresh from '@vitejs/plugin-react';
-
-export default defineConfig({
-  plugins: [reactRefresh()],
-  server: {
-    proxy: {
-      '/api': {
-        target: 'http://localhost:8000', // Update the backend port to match with the actual one
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
-      }
-    }
-  }
-});
-```
-
-FILE: frontend/src/App.tsx
-```typescript
-import React, { useState, useEffect } from 'react';
-import './App.css';
-
-interface Todo {
-  id: number;
-  title: string;
-  description: string;
-}
-
-function App() {
-  const [todos, setTodos] = useState<Todo[]>([]);
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-
-  useEffect(() => {
-    fetch('/api/todos')
-      .then(response => response.json())
-      .then(data => setTodos(data));
-  }, []);
-
-  const addTodo = async () => {
-    if (title && description) {
-      const response = await fetch('/api/todos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, description })
-      });
-      const newTodo = await response.json();
-      setTodos([...todos, newTodo]);
-      setTitle('');
-      setDescription('');
-    }
-  };
-
-  const updateTodo = async (id: number, updatedTitle: string, updatedDescription: string) => {
-    const response = await fetch(`/api/todos/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: updatedTitle, description: updatedDescription })
-    });
-    const updatedTodo = await response.json();
-    setTodos(todos.map(todo => (todo.id === id ? updatedTodo : todo)));
-  };
-
-  const deleteTodo = async (id: number) => {
-    await fetch(`/api/todos/${id}`, { method: 'DELETE' });
-    setTodos(todos.filter(todo => todo.id !== id));
-  };
-
-  return (
-    <div className="App">
-      <h1>Todo App</h1>
-      <input
-        type="text"
-        placeholder="Title"
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-      />
-      <input
-        type="text"
-        placeholder="Description"
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-      />
-      <button onClick={addTodo}>Add Todo</button>
-      <ul>
-        {todos.map(todo => (
-          <li key={todo.id}>
-            <input
-              type="text"
-              defaultValue={todo.title}
-              onBlur={(e) => updateTodo(todo.id, e.target.value, todo.description)}
-            />
-            <input
-              type="text"
-              defaultValue={todo.description}
-              onBlur={(e) => updateTodo(todo.id, todo.title, e.target.value)}
-            />
-            <button onClick={() => deleteTodo(todo.id)}>Delete</button>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-export default App;
-```
-
 FILE: backend/main.py
 ```python
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import sqlite3
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, Integer, String
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
 
 app = FastAPI()
 
 # Enable CORS for React frontend
-from fastapi.middleware.cors import CORSMiddleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3001"], # Update the origin to match with the actual frontend port
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./todos.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+# SQLite database setup
+conn = sqlite3.connect('todos.db', check_same_thread=False)
+cursor = conn.cursor()
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS todos  (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    completed BOOLEAN DEFAULT FALSE
+)
+''')
+conn.commit()
 
-class Todo(Base):
-    __tablename__ = "todos"
-
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String, index=True)
-    description = Column(String)
-
-Base.metadata.create_all(bind=engine)
-
-class TodoCreate(BaseModel):
+class Todo(BaseModel):
     title: str
-    description: str
+    completed: bool
 
-class TodoRead(TodoCreate):
+class TodoIn(Todo):
+    pass
+
+class TodoOut(Todo):
     id: int
+
+@app.get("/todos", response_model=list[TodoOut])
+def read_todos():
+    cursor.execute("SELECT * FROM todos")
+    rows = cursor.fetchall()
+    return [{"id": row[0], "title": row[1], "completed": bool(row[2])} for row in rows]
+
+@app.post("/todos", response_model=TodoOut, status_code=201)
+def create_todo(todo: TodoIn):
+    cursor.execute("INSERT INTO todos (title, completed) VALUES (?, ?)", (todo.title, todo.completed))
+    conn.commit()
+    return {"id": cursor.lastrowid, "title": todo.title, "completed": todo.completed}
+
+@app.put("/todos/{todo_id}", response_model=TodoOut)
+def update_todo(todo_id: int, todo: Todo):
+    cursor.execute("UPDATE todos SET title = ?, completed = ? WHERE id = ?", (todo.title, todo.completed, todo_id))
+    conn.commit()
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    return {"id": todo_id, "title": todo.title, "completed": todo.completed}
+
+@app.delete("/todos/{todo_id}", response_model=dict)
+def delete_todo(todo_id: int):
+    cursor.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
+    conn.commit()
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    return {"message": "Todo deleted"}
 ```

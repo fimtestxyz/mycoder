@@ -52,10 +52,30 @@ for i, match in enumerate(splits):
     content_end   = splits[i+1].start() if i+1 < len(splits) else len(content)
     file_content  = content[content_start:content_end]
 
-    # Strip wrapping markdown fences if present
-    fence_match = re.match(r'^```[^\n]*\n([\s\S]*?)```\s*$', file_content.strip())
-    if fence_match:
-        file_content = fence_match.group(1)
+    # Strip markdown fences — handles all LLM output patterns:
+    #   • ``` ... ```          (clean wrap)
+    #   • ``` with no close    (LLM truncation)
+    #   • ``` + trailing text  (LLM commentary after closing ```)
+    #   • preamble + ```       (short "Here is the fix:" before fence)
+    #   • no fence at all      (good model output — pass through)
+    s = file_content.strip()
+    if s:
+        # Strip short preamble (≤3 lines) before first ```
+        first_fence = s.find('```')
+        if 0 < first_fence:
+            pre = s[:first_fence]
+            if pre.count('\n') <= 2:
+                s = s[first_fence:]
+        # If content starts with a fence, extract its body
+        if s.startswith('```'):
+            newline = s.find('\n')
+            if newline >= 0:
+                s = s[newline + 1:]       # drop the ```lang line
+            # Strip closing ``` AND everything after it (trailing LLM commentary)
+            close = re.search(r'\n```', s)
+            if close:
+                s = s[:close.start()]
+        file_content = s
 
     # Remove trailing whitespace/newlines beyond one
     file_content = file_content.rstrip('\n') + '\n'

@@ -1,7 +1,10 @@
 {
-  "planner_model": "qwen2.5-coder:32b",
-  "coder_model": "qwen2.5-coder:32b",
-  "repair_model": "deepseek-coder:33b",
-  "max_retries": 3,
-  "project_root": "workspace"
+  "planner_model":       "qwen2.5-coder:32b",
+  "coder_model":         "qwen2.5-coder:32b",
+  "repair_model":        "deepseek-coder:33b",
+  "repair_model_fallback": "qwen2.5-coder:14b",
+  "max_retries":         3,
+  "project_root":        "workspace",
+  "backend_port":        "8000",
+  "frontend_port":       "5173"
 }

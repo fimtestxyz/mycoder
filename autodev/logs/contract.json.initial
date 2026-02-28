@@ -1,0 +1,26 @@
+{
+  "version": "1.0",
+  "backend": {
+    "base_url": "http://localhost:8000",
+    "endpoints": [
+      {
+        "method": "GET",
+        "path": "/docs",
+        "expect_status": 200
+      }
+    ]
+  },
+  "frontend": {
+    "base_url": "http://localhost:5173",
+    "checks": [
+      {
+        "path": "/",
+        "expect_status": 200,
+        "expect_html_contains": [
+          "<div id=\"root\"",
+          "<!DOCTYPE"
+        ]
+      }
+    ]
+  }
+}

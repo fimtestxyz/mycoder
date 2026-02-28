@@ -1,4 +1,4 @@
-You are an expert full-stack software engineer. Your job is to implement a complete, working, runnable software project based on the task and plan below.
+You are an expert full-stack software engineer. Implement a complete, working, runnable project.
 
 TASK:
 Build a simple Todo App with a React frontend and a Python FastAPI backend
@@ -15,34 +15,57 @@ ARCHITECTURE PLAN:
   "dependencies": ["react", "fastapi", "uvicorn", "sqlalchemy"]
 }
 
-OUTPUT RULES — READ CAREFULLY:
-1. Output EVERY file needed for the project to run
-2. Use EXACTLY this format for each file (no exceptions):
+REQUIRED ENDPOINTS (implement ALL of these exactly):
+Implement these exact endpoints: GET /docs
+
+═══════════════════════════════════════════════════════
+OUTPUT FORMAT — CRITICAL — follow exactly:
+═══════════════════════════════════════════════════════
 
 FILE: relative/path/to/file.ext
-<complete file content here — no truncation>
+<complete file content — plain code, NO markdown fences>
 
-FILE: another/path/to/file.ext
-<complete file content here>
+FILE: another/path.ext
+<complete file content — plain code, NO markdown fences>
 
-3. Do NOT use markdown code fences (no ```) inside or around file content
-4. Do NOT write "// ... rest of code" or "# TODO" — write complete code
-5. Paths are relative to the project root (e.g., frontend/src/App.tsx)
+═══════════════════════════════════════════════════════
+RULES:
+═══════════════════════════════════════════════════════
+1. Output ONLY FILE: blocks. No explanation before or after.
+2. NEVER wrap file content in ``` or ```python or ```json — write raw code directly.
+3. Write COMPLETE code — no "// TODO", no "...rest of code", no truncation.
+4. All files must be production-ready and runnable.
 
-REQUIRED FILES — include ALL of these:
-- backend/main.py (FastAPI app with all routes)
-- backend/requirements.txt (uvicorn[standard], fastapi, and any others)
-- frontend/package.json (with "dev" script using vite or react-scripts)
-- frontend/src/App.tsx (complete working UI)
-- frontend/src/main.tsx (React entry point)  
-- frontend/index.html (Vite HTML template)
-- frontend/vite.config.ts (Vite config with proxy to backend port 8000)
-- docker-compose.yml (to run both services)
-- README.md (setup and run instructions)
+REQUIRED FILES AND THEIR EXACT CONTENT:
 
-CODING STANDARDS:
-- Backend: FastAPI with CORS enabled for localhost:5173, SQLite for storage (no external DB needed), pydantic models for validation
-- Frontend: React 18 + TypeScript + Vite, fetch() for API calls (proxy via vite.config.ts)
-- All imports must be correct and complete
-- Backend must start with: uvicorn main:app --reload --port 8000
-- Frontend must start with: npm run dev (default Vite port 5173)
+FILE: backend/main.py
+- FastAPI app with all CRUD endpoints from CONTRACT_SUMMARY
+- CORSMiddleware: allow_origins=["http://localhost:5173"]
+- SQLite database using sqlite3 directly (no SQLAlchemy needed)
+- Pydantic models matching the endpoint response shapes
+
+FILE: backend/requirements.txt
+fastapi
+uvicorn[standard]
+pydantic
+
+FILE: frontend/package.json
+- @vitejs/plugin-react MUST be in devDependencies (not dependencies)
+- vite MUST be in devDependencies
+
+FILE: frontend/index.html
+- Must have: <div id="root"></div>
+- Must have: <script type="module" src="/src/main.tsx"></script>
+
+FILE: frontend/vite.config.ts
+- Use @vitejs/plugin-react plugin
+- Add server.proxy: { '/api': { target: 'http://localhost:8000', rewrite: ... } }
+
+FILE: frontend/src/main.tsx
+- React entry point mounting App into #root
+
+FILE: frontend/src/App.tsx
+- Working CRUD UI using fetch('/api/todos') calls
+- Shows list of items, add form, delete button
+
+FILE: README.md

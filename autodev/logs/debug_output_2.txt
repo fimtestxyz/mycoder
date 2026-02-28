@@ -1,83 +1,68 @@
-Based on the provided error context and common issues, here are the fixed files:
-
-FILE: frontend/vite.config.ts
-```typescript
-import { defineConfig } from 'vite';
-import reactRefresh from '@vitejs/plugin-react';
-
-export default defineConfig({
-  plugins: [reactRefresh()],
-  server: {
-    proxy: {
-      '/api': {
-        target: 'http://localhost:8000', // Update the backend port to match with the actual one
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
-      }
-    }
-  }
-});
-```
-
-FILE: frontend/package.json
-```json
-{
-  "name": "todo-app",
-  "version": "1.0.0",
-  "scripts": {
-    "dev": "vite"
-  },
-  "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
-  },
-  "devDependencies": {
-    "@types/node": "^17.0.34", // Add this line if it's missing
-    "@vitejs/plugin-react": "^2.1.5", // Ensure @vitejs/plugin-react is in devDependencies
-    "typescript": "^4.6.4",
-    "vite": "^3.0.7"
-  }
-}
-```
-
 FILE: backend/main.py
 ```python
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import sqlite3
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, Integer, String
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
 
 app = FastAPI()
 
 # Enable CORS for React frontend
-from fastapi.middleware.cors import CORSMiddleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3001"], # Update the origin to match with the actual frontend port
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./todos.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+# SQLite database setup
+conn = sqlite3.connect('todos.db', check_same_thread=False)
+cursor = conn.cursor()
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS todos  (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    completed BOOLEAN DEFAULT FALSE
+)
+''')
+conn.commit()
 
-class Todo(Base):
-    __tablename__ = "todos"
-
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String, index=True)
-    description = Column(String)
-
-Base.metadata.create_all(bind=engine)
-
-class TodoCreate(BaseModel):
+class Todo(BaseModel):
     title: str
-    description: str
+    completed: bool
 
-class TodoRead(TodoCreate):
+class TodoIn(Todo):
+    pass
+
+class TodoOut(Todo):
     id: int
+
+@app.get("/todos", response_model=list[TodoOut])
+def read_todos():
+    cursor.execute("SELECT * FROM todos")
+    rows = cursor.fetchall()
+    return [{"id": row[0], "title": row[1], "completed": bool(row[2])} for row in rows]
+
+@app.post("/todos", response_model=TodoOut, status_code=201)
+def create_todo(todo: TodoIn):
+    cursor.execute("INSERT INTO todos (title, completed) VALUES (?, ?)", (todo.title, todo.completed))
+    conn.commit()
+    return {"id": cursor.lastrowid, "title": todo.title, "completed": todo.completed}
+
+@app.put("/todos/{todo_id}", response_model=TodoOut)
+def update_todo(todo_id: int, todo: Todo):
+    cursor.execute("UPDATE todos SET title = ?, completed = ? WHERE id = ?", (todo.title, todo.completed, todo_id))
+    conn.commit()
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    return {"id": todo_id, "title": todo.title, "completed": todo.completed}
+
+@app.delete("/todos/{todo_id}", response_model=dict)
+def delete_todo(todo_id: int):
+    cursor.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
+    conn.commit()
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    return {"message": "Todo deleted"}
 ```
