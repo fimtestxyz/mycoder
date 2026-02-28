@@ -1,0 +1,83 @@
+Based on the provided error context and common issues, here are the fixed files:
+
+FILE: frontend/vite.config.ts
+```typescript
+import { defineConfig } from 'vite';
+import reactRefresh from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [reactRefresh()],
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000', // Update the backend port to match with the actual one
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '')
+      }
+    }
+  }
+});
+```
+
+FILE: frontend/package.json
+```json
+{
+  "name": "todo-app",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vite"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^17.0.34", // Add this line if it's missing
+    "@vitejs/plugin-react": "^2.1.5", // Ensure @vitejs/plugin-react is in devDependencies
+    "typescript": "^4.6.4",
+    "vite": "^3.0.7"
+  }
+}
+```
+
+FILE: backend/main.py
+```python
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+app = FastAPI()
+
+# Enable CORS for React frontend
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3001"], # Update the origin to match with the actual frontend port
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+SQLALCHEMY_DATABASE_URL = "sqlite:///./todos.db"
+engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+class Todo(Base):
+    __tablename__ = "todos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, index=True)
+    description = Column(String)
+
+Base.metadata.create_all(bind=engine)
+
+class TodoCreate(BaseModel):
+    title: str
+    description: str
+
+class TodoRead(TodoCreate):
+    id: int
+```

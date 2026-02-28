@@ -1,0 +1,10 @@
+{
+  "project_type": "Web App",
+  "tech_stack": ["React", "TypeScript", "FastAPI", "SQLite"],
+  "modules": [
+    {"name": "Frontend", "description": "React UI", "technologies": ["React", "TypeScript", "Vite"]},
+    {"name": "Backend", "description": "FastAPI REST API", "technologies": ["FastAPI", "SQLite", "SQLAlchemy"]}
+  ],
+  "folder_structure": ["frontend/", "backend/"],
+  "dependencies": ["react", "fastapi", "uvicorn", "sqlalchemy"]
+}

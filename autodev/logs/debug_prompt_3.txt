@@ -1,0 +1,224 @@
+You are an expert full-stack debugger. Services were built but failed UAT tests or have runtime errors.
+
+ERROR CONTEXT:
+=== Backend Logs ===
+INFO:     Will watch for changes in these directories: ['/Users/wwkoon/.openclaw/workspace/mycoder/autodev/workspace/build-a-simple-todo-app-with-a-react-fro/backend']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [18062] using WatchFiles
+INFO:     Started server process [18066]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:63753 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63755 - "GET /todos HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:63757 - "POST /todos HTTP/1.1" 404 Not Found
+
+=== Frontend Logs ===
+npm error code EJSONPARSE
+npm error JSON.parse Invalid package.json: JSONParseError: Expected double-quoted property name in JSON at position 214 (line 12 column 32) while parsing near ".../node\": \"^17.0.34\", // Add this line if ..."
+npm error JSON.parse Failed to parse JSON data.
+npm error JSON.parse Note: package.json must be actual JSON, not just JavaScript.
+npm error A complete log of this run can be found in: /Users/wwkoon/.npm/_logs/2026-02-28T13_24_10_213Z-debug-0.log
+
+=== Failed UAT Tests ===
+[
+  {
+    "name": "GET /todos",
+    "status": 404,
+    "ok": false,
+    "error": "HTTP Error 404: Not Found"
+  },
+  {
+    "name": "POST /todos",
+    "status": 404,
+    "ok": false,
+    "error": "HTTP Error 404: Not Found"
+  },
+  {
+    "name": "GET / (frontend)",
+    "status": 0,
+    "ok": false,
+    "error": "<urlopen error [Errno 61] Connection refused>"
+  }
+]
+
+CURRENT SOURCE FILES:
+FILE: frontend/vite.config.ts
+import { defineConfig } from 'vite';
+import reactRefresh from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [reactRefresh()],
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000', // Update the backend port to match with the actual one
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '')
+      }
+    }
+  }
+});
+
+FILE: frontend/src/App.tsx
+import React, { useState, useEffect } from 'react';
+import './App.css';
+
+interface Todo {
+  id: number;
+  title: string;
+  description: string;
+}
+
+function App() {
+  const [todos, setTodos] = useState<Todo[]>([]);
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+
+  useEffect(() => {
+    fetch('/api/todos')
+      .then(response => response.json())
+      .then(data => setTodos(data));
+  }, []);
+
+  const addTodo = async () => {
+    if (title && description) {
+      const response = await fetch('/api/todos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, description })
+      });
+      const newTodo = await response.json();
+      setTodos([...todos, newTodo]);
+      setTitle('');
+      setDescription('');
+    }
+  };
+
+  const updateTodo = async (id: number, updatedTitle: string, updatedDescription: string) => {
+    const response = await fetch(`/api/todos/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: updatedTitle, description: updatedDescription })
+    });
+    const updatedTodo = await response.json();
+    setTodos(todos.map(todo => (todo.id === id ? updatedTodo : todo)));
+  };
+
+  const deleteTodo = async (id: number) => {
+    await fetch(`/api/todos/${id}`, { method: 'DELETE' });
+    setTodos(todos.filter(todo => todo.id !== id));
+  };
+
+  return (
+    <div className="App">
+      <h1>Todo App</h1>
+      <input
+        type="text"
+        placeholder="Title"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+      />
+      <input
+        type="text"
+        placeholder="Description"
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+      />
+      <button onClick={addTodo}>Add Todo</button>
+      <ul>
+        {todos.map(todo => (
+          <li key={todo.id}>
+            <input
+              type="text"
+              defaultValue={todo.title}
+              onBlur={(e) => updateTodo(todo.id, e.target.value, todo.description)}
+            />
+            <input
+              type="text"
+              defaultValue={todo.description}
+              onBlur={(e) => updateTodo(todo.id, todo.title, e.target.value)}
+            />
+            <button onClick={() => deleteTodo(todo.id)}>Delete</button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export default App;
+
+FILE: frontend/src/main.tsx
+import React from 'react';
+import ReactDOM from 'react-dom';
+import App from './App';
+
+ReactDOM.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+  document.getElementById('root')
+);
+
+FILE: backend/main.py
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+app = FastAPI()
+
+# Enable CORS for React frontend
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3001"], # Update the origin to match with the actual frontend port
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+SQLALCHEMY_DATABASE_URL = "sqlite:///./todos.db"
+engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+class Todo(Base):
+    __tablename__ = "todos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, index=True)
+    description = Column(String)
+
+Base.metadata.create_all(bind=engine)
+
+class TodoCreate(BaseModel):
+    title: str
+    description: str
+
+class TodoRead(TodoCreate):
+    id: int
+
+
+
+Backend runs on port 8000, Frontend on port 5173.
+
+Analyze ALL errors and output ONLY the fixed files that need changing, using this EXACT format:
+
+FILE: relative/path/to/file.ext
+<complete fixed file content>
+
+Common issues to check:
+- Frontend: missing npm packages (add to devDependencies AND run npm install)
+- Frontend: vite.config.ts imports plugin that isn't installed
+- Frontend: API proxy URL mismatch with backend port
+- Backend: CORS origin not matching frontend port
+- Backend: import errors or missing dependencies in requirements.txt
+- Backend: SQLAlchemy model issues
+
+RULES:
+- Output COMPLETE file content, not just the changed parts
+- Do NOT use markdown code fences (no ```)
+- Do NOT add explanation outside FILE: blocks
+- If vite.config.ts has plugin-react: ensure @vitejs/plugin-react is in devDependencies in package.json

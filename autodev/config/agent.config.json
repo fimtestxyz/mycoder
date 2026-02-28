@@ -1,0 +1,7 @@
+{
+  "planner_model": "qwen2.5-coder:32b",
+  "coder_model": "qwen2.5-coder:32b",
+  "repair_model": "deepseek-coder:33b",
+  "max_retries": 3,
+  "project_root": "workspace"
+}

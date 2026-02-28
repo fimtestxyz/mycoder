@@ -1,0 +1,263 @@
+You are an expert full-stack debugger. Services were built but failed UAT tests or have runtime errors.
+
+ERROR CONTEXT:
+=== Backend Logs ===
+INFO:     Will watch for changes in these directories: ['/Users/wwkoon/.openclaw/workspace/mycoder/autodev/workspace/build-a-simple-todo-app-with-a-react-fro/backend']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [17863] using WatchFiles
+INFO:     Started server process [17889]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:63580 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63582 - "GET /todos HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:63584 - "GET /todos/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63586 - "POST /todos HTTP/1.1" 307 Temporary Redirect
+
+=== Frontend Logs ===
+
+> todo-app@1.0.0 dev
+> vite
+
+Port 3000 is in use, trying another one...
+
+  vite v2.9.18 dev server running at:
+
+  > Local: http://localhost:3001/
+  > Network: use `--host` to expose
+
+  ready in 91ms.
+
+=== Failed UAT Tests ===
+[
+  {
+    "name": "POST /todos",
+    "status": 307,
+    "ok": false,
+    "error": "HTTP Error 307: Temporary Redirect"
+  },
+  {
+    "name": "GET / (frontend)",
+    "status": 0,
+    "ok": false,
+    "error": "<urlopen error [Errno 61] Connection refused>"
+  }
+]
+
+CURRENT SOURCE FILES:
+FILE: frontend/vite.config.ts
+import { defineConfig } from 'vite';
+import reactRefresh from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [reactRefresh()],
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '')
+      }
+    }
+  }
+});
+
+FILE: frontend/src/App.tsx
+import React, { useState, useEffect } from 'react';
+import './App.css';
+
+interface Todo {
+  id: number;
+  title: string;
+  description: string;
+}
+
+function App() {
+  const [todos, setTodos] = useState<Todo[]>([]);
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+
+  useEffect(() => {
+    fetch('/api/todos')
+      .then(response => response.json())
+      .then(data => setTodos(data));
+  }, []);
+
+  const addTodo = async () => {
+    if (title && description) {
+      const response = await fetch('/api/todos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, description })
+      });
+      const newTodo = await response.json();
+      setTodos([...todos, newTodo]);
+      setTitle('');
+      setDescription('');
+    }
+  };
+
+  const updateTodo = async (id: number, updatedTitle: string, updatedDescription: string) => {
+    const response = await fetch(`/api/todos/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: updatedTitle, description: updatedDescription })
+    });
+    const updatedTodo = await response.json();
+    setTodos(todos.map(todo => (todo.id === id ? updatedTodo : todo)));
+  };
+
+  const deleteTodo = async (id: number) => {
+    await fetch(`/api/todos/${id}`, { method: 'DELETE' });
+    setTodos(todos.filter(todo => todo.id !== id));
+  };
+
+  return (
+    <div className="App">
+      <h1>Todo App</h1>
+      <input
+        type="text"
+        placeholder="Title"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+      />
+      <input
+        type="text"
+        placeholder="Description"
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+      />
+      <button onClick={addTodo}>Add Todo</button>
+      <ul>
+        {todos.map(todo => (
+          <li key={todo.id}>
+            <input
+              type="text"
+              defaultValue={todo.title}
+              onBlur={(e) => updateTodo(todo.id, e.target.value, todo.description)}
+            />
+            <input
+              type="text"
+              defaultValue={todo.description}
+              onBlur={(e) => updateTodo(todo.id, todo.title, e.target.value)}
+            />
+            <button onClick={() => deleteTodo(todo.id)}>Delete</button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export default App;
+
+FILE: frontend/src/main.tsx
+import React from 'react';
+import ReactDOM from 'react-dom';
+import App from './App';
+
+ReactDOM.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+  document.getElementById('root')
+);
+
+FILE: backend/main.py
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+app = FastAPI()
+
+# Enable CORS for React frontend
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+SQLALCHEMY_DATABASE_URL = "sqlite:///./todos.db"
+engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+class Todo(Base):
+    __tablename__ = "todos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, index=True)
+    description = Column(String)
+
+Base.metadata.create_all(bind=engine)
+
+class TodoCreate(BaseModel):
+    title: str
+    description: str
+
+class TodoRead(TodoCreate):
+    id: int
+
+@app.post("/todos/", response_model=TodoRead)
+def create_todo(todo: TodoCreate):
+    db = SessionLocal()
+    db_todo = Todo(title=todo.title, description=todo.description)
+    db.add(db_todo)
+    db.commit()
+    db.refresh(db_todo)
+    return db_todo
+
+@app.get("/todos/", response_model=list[TodoRead])
+def read_todos():
+    db = SessionLocal()
+    todos = db.query(Todo).all()
+    return todos
+
+@app.put("/todos/{todo_id}", response_model=TodoRead)
+def update_todo(todo_id: int, todo: TodoCreate):
+    db = SessionLocal()
+    db_todo = db.query(Todo).filter(Todo.id == todo_id).first()
+    if not db_todo:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    db_todo.title = todo.title
+    db_todo.description = todo.description
+    db.commit()
+    db.refresh(db_todo)
+    return db_todo
+
+@app.delete("/todos/{todo_id}", response_model=TodoRead)
+def delete_todo(todo_id: int):
+    db = SessionLocal()
+    db_todo = db.query(Todo).filter(Todo.id == todo_id).first()
+    if not db_todo:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    db.delete(db_todo)
+    db.commit()
+    return db_todo
+
+
+
+Backend runs on port 8000, Frontend on port 5173.
+
+Analyze ALL errors and output ONLY the fixed files that need changing, using this EXACT format:
+
+FILE: relative/path/to/file.ext
+<complete fixed file content>
+
+Common issues to check:
+- Frontend: missing npm packages (add to devDependencies AND run npm install)
+- Frontend: vite.config.ts imports plugin that isn't installed
+- Frontend: API proxy URL mismatch with backend port
+- Backend: CORS origin not matching frontend port
+- Backend: import errors or missing dependencies in requirements.txt
+- Backend: SQLAlchemy model issues
+
+RULES:
+- Output COMPLETE file content, not just the changed parts
+- Do NOT use markdown code fences (no ```)
+- Do NOT add explanation outside FILE: blocks
+- If vite.config.ts has plugin-react: ensure @vitejs/plugin-react is in devDependencies in package.json
