@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Play, Square, RotateCcw, Terminal, Target, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -32,13 +32,19 @@ export default function Home() {
   const [logs, setLogs] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const goalInitialized = useRef(false);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/autodev?lines=240", { cache: "no-store" });
     const data = await res.json();
     setState(data.state);
     setLogs(data.logs ?? []);
-    setGoal((prev) => prev || data.state?.goal || "");
+
+    // Initialize input once from backend state, then never overwrite user typing.
+    if (!goalInitialized.current && data.state?.goal) {
+      setGoal(data.state.goal);
+      goalInitialized.current = true;
+    }
   }, []);
 
   useEffect(() => {
@@ -96,7 +102,10 @@ export default function Home() {
             <CardContent className="space-y-4">
               <Input
                 value={goal}
-                onChange={(e) => setGoal(e.target.value)}
+                onChange={(e) => {
+                  goalInitialized.current = true;
+                  setGoal(e.target.value);
+                }}
                 placeholder="e.g. Build a multi-tenant SaaS dashboard with Stripe billing"
                 className="h-12 text-base"
               />
