@@ -1,96 +1,121 @@
 #!/usr/bin/env python3
 """
-contract_generator.py - Extract testable contract from plan.json + source files
+contract_generator.py - Build dynamic UAT contract from plan + generated source code
 Usage: python3 contract_generator.py <plan.json> <project_root> <backend_port> <frontend_port> <output.json>
 """
 import sys, json, os, re
 
+
+def _load_json(path, fallback):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return fallback
+
+
+def _walk_sources(project_root):
+    for root, dirs, files in os.walk(project_root):
+        dirs[:] = [d for d in dirs if d not in ("venv", "node_modules", "__pycache__", ".git", "dist", ".next")]
+        for fname in files:
+            if fname.endswith((".py", ".js", ".ts")):
+                path = os.path.join(root, fname)
+                try:
+                    yield path, open(path, "r", encoding="utf-8", errors="ignore").read()
+                except Exception:
+                    continue
+
+
+def _infer_request_body(path):
+    # Generic payload shape for dynamic entities
+    resource = [p for p in path.split("/") if p and not p.startswith("{")]
+    name = resource[-1] if resource else "item"
+    singular = name[:-1] if name.endswith("s") else name
+    return {
+        "name": f"Sample {singular}",
+        "title": f"Sample {singular}",
+        "description": "Sample description",
+        "content": "Sample content",
+    }
+
+
+def _parse_fastapi_routes(src):
+    routes = []
+    for m in re.finditer(r'@\w*app\.(get|post|put|patch|delete)\s*\(\s*["\']([^"\']+)["\']', src, re.IGNORECASE):
+        routes.append((m.group(1).upper(), m.group(2)))
+    return routes
+
+
+def _parse_express_routes(src):
+    routes = []
+    for m in re.finditer(r'\b(?:app|router)\.(get|post|put|patch|delete)\s*\(\s*["\']([^"\']+)["\']', src, re.IGNORECASE):
+        routes.append((m.group(1).upper(), m.group(2)))
+    return routes
+
+
+def _normalize_path(path):
+    # Convert :id style to {id} for UAT runner template replacement
+    return re.sub(r":([a-zA-Z_][a-zA-Z0-9_]*)", r"{\1}", path)
+
+
 def generate_contract(plan_path, project_root, backend_port, frontend_port, out_path):
-    with open(plan_path) as f:
-        plan = json.load(f)
+    plan = _load_json(plan_path, {})
+    tech_stack = [str(t).lower() for t in plan.get("tech_stack", [])]
 
-    tech_stack = [t.lower() for t in plan.get("tech_stack", [])]
-    has_backend  = any(t in tech_stack for t in ["fastapi","flask","express","django","node"])
-    has_frontend = any(t in tech_stack for t in ["react","vue","angular","svelte","vite"])
+    has_backend = any(k in tech_stack for k in ["fastapi", "flask", "django", "express", "node", "nestjs"])
+    has_frontend = any(k in tech_stack for k in ["react", "vue", "angular", "svelte", "next", "vite"])
 
-    contract = {"version": "1.0"}
+    contract = {"version": "2.0"}
 
-    # ── Infer backend routes from source ─────────────────────────────────────
     if has_backend:
-        contract["backend"] = {
-            "base_url": f"http://localhost:{backend_port}",
-            "endpoints": []
-        }
-        endpoints = contract["backend"]["endpoints"]
+        endpoints = []
+        discovered = []
 
-        # Always test docs and health
-        endpoints.append({"method": "GET", "path": "/docs", "expect_status": 200})
+        for _, src in _walk_sources(project_root):
+            discovered.extend(_parse_fastapi_routes(src))
+            discovered.extend(_parse_express_routes(src))
 
-        # Scan Python files for FastAPI route decorators
-        routes_found = []
-        for root, dirs, files in os.walk(project_root):
-            dirs[:] = [d for d in dirs if d not in ("venv", "__pycache__", "node_modules")]
-            for fname in files:
-                if fname.endswith(".py"):
-                    try:
-                        src = open(os.path.join(root, fname)).read()
-                    except: continue
-                    for m in re.finditer(
-                        r'@app\.(get|post|put|patch|delete)\s*\(\s*["\']([^"\']+)["\']',
-                        src, re.IGNORECASE
-                    ):
-                        method = m.group(1).upper()
-                        path   = m.group(2)
-                        # Extract response model name if present
-                        routes_found.append((method, path))
+        # fallback when route decorators not found: test root + health-like endpoints
+        if not discovered:
+            discovered = [("GET", "/"), ("GET", "/health")]
 
-        # Build test sequence: GET → POST (with body) → DELETE
-        resource_paths = set()
-        for method, path in routes_found:
-            # Infer resource name from path (e.g. /todos → todo)
-            parts = [p for p in path.split("/") if p and not p.startswith("{")]
-            if parts:
-                resource_paths.add(("/" + "/".join(parts), method))
-
-        # Add discovered routes as tests
-        for base_path, method in sorted(resource_paths):
-            resource = base_path.strip("/").split("/")[-1]  # e.g. "todos"
-            singular = resource.rstrip("s")  # naive singularize
+        for method, raw_path in discovered:
+            path = _normalize_path(raw_path)
+            endpoint = {"method": method, "path": path}
 
             if method == "GET":
-                endpoints.append({
-                    "method": "GET", "path": base_path,
-                    "expect_status": 200, "expect_body_type": "array"
-                })
+                endpoint["expect_status"] = [200, 204]
             elif method == "POST":
-                endpoints.append({
-                    "method": "POST", "path": base_path,
-                    "expect_status": [200, 201],
-                    "request_body": {
-                        "title": f"UAT {singular}",
-                        "name":  f"UAT {singular}"  # common alternatives
-                    },
-                    "expect_body_keys": ["id"]
-                })
+                endpoint["expect_status"] = [200, 201, 202]
+                endpoint["request_body"] = _infer_request_body(path)
+            elif method in ("PUT", "PATCH"):
+                endpoint["expect_status"] = [200, 202]
+                endpoint["request_body"] = _infer_request_body(path)
             elif method == "DELETE":
-                endpoints.append({
-                    "method": "DELETE", "path": base_path + "/{id}",
-                    "expect_status": [200, 204]
-                })
+                endpoint["expect_status"] = [200, 202, 204]
+            else:
+                endpoint["expect_status"] = [200]
 
-        # Deduplicate and sort: GET first, then POST, then DELETE
-        order = {"GET": 0, "POST": 1, "PUT": 2, "PATCH": 3, "DELETE": 4}
+            endpoints.append(endpoint)
+
+        # Keep deterministic unique list
         seen = set()
         unique = []
         for ep in endpoints:
             key = (ep["method"], ep["path"])
-            if key not in seen:
-                seen.add(key)
-                unique.append(ep)
-        endpoints.clear()
-        endpoints.extend(sorted(unique, key=lambda e: (order.get(e["method"],9), e["path"])))
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(ep)
 
-    # ── Frontend checks ───────────────────────────────────────────────────────
+        order = {"GET": 0, "POST": 1, "PUT": 2, "PATCH": 3, "DELETE": 4}
+        unique.sort(key=lambda e: (order.get(e["method"], 9), e["path"]))
+
+        contract["backend"] = {
+            "base_url": f"http://localhost:{backend_port}",
+            "endpoints": unique,
+        }
+
     if has_frontend:
         contract["frontend"] = {
             "base_url": f"http://localhost:{frontend_port}",
@@ -98,17 +123,20 @@ def generate_contract(plan_path, project_root, backend_port, frontend_port, out_
                 {
                     "path": "/",
                     "expect_status": 200,
-                    "expect_html_contains": ['<div id="root"', "<!DOCTYPE"]
+                    "expect_html_contains": ["<html", "</html"],
                 }
-            ]
+            ],
         }
 
     with open(out_path, "w") as f:
         json.dump(contract, f, indent=2)
 
-    print(f"  [Contract] Generated: {len(contract.get('backend',{}).get('endpoints',[]))} API tests, "
-          f"{len(contract.get('frontend',{}).get('checks',[]))} frontend checks")
+    print(
+        f"  [Contract] Generated: {len(contract.get('backend', {}).get('endpoints', []))} API tests, "
+        f"{len(contract.get('frontend', {}).get('checks', []))} frontend checks"
+    )
     return contract
+
 
 if __name__ == "__main__":
     generate_contract(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])

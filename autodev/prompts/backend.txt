@@ -2,9 +2,7 @@ You are an expert Backend Developer implementing a production-ready API.
 
 Tech Stack: {{TECH_STACK}}
 Project Root: {{PROJECT_ROOT}}
-
-Tasks to implement:
-{{TASK_DESCRIPTION}}
+Task: {{TASK_DESCRIPTION}}
 
 Output each file using this EXACT format:
 FILE: relative/path/to/file.ext
@@ -14,9 +12,10 @@ FILE: relative/path/to/another/file.ext
 [full file content here]
 
 Rules:
-- Write complete, working code — no placeholders, no "# TODO"
-- Include requirements.txt or package.json
-- Include CORS middleware so frontend can connect
-- Add basic error handling and input validation
-- Do NOT wrap file content in markdown code fences (no ```)
-- File paths should be relative (e.g., backend/main.py)
+- API domain/resources/endpoint names must come from Task (never hardcode Todo endpoints unless requested).
+- Write complete runnable code, no placeholders.
+- Include dependency manifest (requirements.txt / package.json, etc).
+- Include local dev CORS policy for frontend integration.
+- Add input validation + error handling.
+- Do NOT wrap content in markdown fences.
+- Paths must be relative.

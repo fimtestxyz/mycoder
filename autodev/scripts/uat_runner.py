@@ -4,7 +4,7 @@ uat_runner.py - Contract-driven UAT engine
 Reads a contract.json, executes tests, writes structured failure reports.
 Usage: python3 uat_runner.py <contract.json> <output_report.json>
 """
-import sys, json, time, urllib.request, urllib.error, os
+import sys, json, time, urllib.request, urllib.error, os, re
 
 def run_uat(contract_path, report_path):
     with open(contract_path) as f:
@@ -49,7 +49,7 @@ def run_uat(contract_path, report_path):
             all_pass = False
 
     # ── Backend endpoint tests ────────────────────────────────────────────────
-    created_ids = {}  # track IDs for dependent tests (e.g. DELETE needs POST id)
+    created_params = {}  # e.g. {'id': 123, 'userId': 5} from create responses
 
     for ep in contract.get("backend", {}).get("endpoints", []):
         method   = ep["method"]
@@ -59,13 +59,20 @@ def run_uat(contract_path, report_path):
         if isinstance(statuses, int):
             statuses = [statuses]
 
-        # Resolve parameterized paths (e.g. /todos/{id})
-        if "{id}" in path:
-            if created_ids:
-                path = path.replace("{id}", str(list(created_ids.values())[-1]))
+        # Resolve parameterized paths (e.g. /orders/{id}, /users/{userId})
+        params = re.findall(r"\{([^}]+)\}", path)
+        can_resolve = True
+        for p in params:
+            if p in created_params:
+                path = path.replace("{" + p + "}", str(created_params[p]))
+            elif p.lower().endswith("id") and "id" in created_params:
+                path = path.replace("{" + p + "}", str(created_params["id"]))
             else:
-                print(f"  ⏭  SKIP {method} {path}: no id available yet")
-                continue
+                can_resolve = False
+                break
+        if not can_resolve:
+            print(f"  ⏭  SKIP {method} {path}: missing path param values")
+            continue
 
         url  = backend_url + path
         name = f"{method} {ep['path']}"
@@ -99,9 +106,13 @@ def run_uat(contract_path, report_path):
                     body_errors.append(f"expected dict, got {type(resp_body).__name__}")
                     ok = False
 
-            # Track created IDs for DELETE tests
-            if method == "POST" and isinstance(resp_body, dict) and "id" in resp_body:
-                created_ids[path] = resp_body["id"]
+            # Track created path params from response objects for follow-up tests
+            if method == "POST" and isinstance(resp_body, dict):
+                for k, v in resp_body.items():
+                    if isinstance(v, (int, str)) and k.lower().endswith("id"):
+                        created_params[k] = v
+                if "id" in resp_body:
+                    created_params["id"] = resp_body["id"]
 
             category = "LOGIC" if not ok else "OK"
             if body_errors:

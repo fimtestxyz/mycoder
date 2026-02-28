@@ -8,19 +8,20 @@ Return ONLY valid JSON with no extra text, no markdown fences, no explanation.
 
 {
   "frontend_tasks": [
-    "string (concrete task, e.g., 'Create TodoList component with add/delete/toggle functionality')"
+    "string (concrete task, e.g., 'Create dashboard page with filters, table, and detail drawer')"
   ],
   "backend_tasks": [
-    "string (e.g., 'Implement GET /todos, POST /todos, DELETE /todos/{id} endpoints')"
+    "string (e.g., 'Implement REST endpoints for core resources with validation and pagination')"
   ],
   "mobile_tasks": [],
   "devops_tasks": [
-    "string (e.g., 'Create Dockerfile for backend service')"
+    "string (e.g., 'Create Dockerfile and compose setup for local development')"
   ]
 }
 
 Rules:
-- Tasks must be concrete and implementable
-- If a domain is not in the plan, return empty array []
-- Mobile tasks should be [] unless mobile is in the plan
-- Each task string should be a single actionable item
+- Tasks must be concrete and implementable.
+- Tasks must be derived from the requested domain and plan, not hardcoded templates.
+- If a domain is not in the plan, return empty array [].
+- Mobile tasks should be [] unless mobile is in the plan.
+- Each task string should be a single actionable item.
