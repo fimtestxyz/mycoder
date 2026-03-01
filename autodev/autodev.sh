@@ -394,12 +394,16 @@ echo "Phase 4: Installing & Verifying Dependencies"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 phase_reminder 4 "Installing & Verifying Dependencies"
 
-# Always run install if node_modules or venv is missing, even when resuming
+# Always run install if node_modules or .venv/venv is missing, even when resuming
 NEEDS_INSTALL=0
 while IFS= read -r req_file; do
     dir=$(dirname "$req_file")
-    [[ ! -d "$dir/venv" ]] && NEEDS_INSTALL=1
-done < <(find "$PROJECT_ROOT" -name "requirements.txt" -not -path "*/node_modules/*" -not -path "*/venv/*")
+    [[ ! -d "$dir/.venv" && ! -d "$dir/venv" ]] && NEEDS_INSTALL=1
+done < <(find "$PROJECT_ROOT" -name "requirements.txt" -not -path "*/node_modules/*")
+while IFS= read -r pyproj; do
+    dir=$(dirname "$pyproj")
+    [[ ! -d "$dir/.venv" && ! -d "$dir/venv" ]] && NEEDS_INSTALL=1
+done < <(find "$PROJECT_ROOT" -name "pyproject.toml" -not -path "*/node_modules/*")
 while IFS= read -r pkg_file; do
     dir=$(dirname "$pkg_file")
     [[ ! -d "$dir/node_modules" ]] && NEEDS_INSTALL=1
@@ -409,57 +413,90 @@ if [[ "$LAST_PHASE" -ge 4 && $NEEDS_INSTALL -eq 0 ]]; then
     skip_phase 4 "Install"
 else
     > "$SETUP_LOG"
+    PHASE4_LOG="$PROJECT_ROOT/phase4_dependency_check.log"
+    > "$PHASE4_LOG"
 
-    # Python venv + pip
-    while IFS= read -r req_file; do
-        dir=$(dirname "$req_file")
-        echo "  [Python] $dir"
-        [[ ! -d "$dir/venv" ]] && python3 -m venv "$dir/venv" >> "$SETUP_LOG" 2>&1
-        if "$dir/venv/bin/pip" install --quiet -r "$req_file" >> "$SETUP_LOG" 2>&1; then
-            echo "  [Python] ✅ installed"
+    echo "  [Install] Detailed logs: $SETUP_LOG"
+    echo "  [Verify]  Detailed logs: $PHASE4_LOG"
+
+    # Python backend: uv/.venv preferred
+    while IFS= read -r py_file; do
+        dir=$(dirname "$py_file")
+        echo "[Python] target=$dir" | tee -a "$PHASE4_LOG"
+
+        if [[ -f "$dir/pyproject.toml" && -n "$(command -v uv 2>/dev/null)" ]]; then
+            (cd "$dir" && uv sync) >> "$SETUP_LOG" 2>&1 || true
+            [[ ! -d "$dir/.venv" ]] && (cd "$dir" && uv venv .venv) >> "$SETUP_LOG" 2>&1 || true
         else
-            echo "  [Python] ⚠️  install failed"; tail -5 "$SETUP_LOG"
+            if [[ ! -d "$dir/.venv" && ! -d "$dir/venv" ]]; then
+                python3 -m venv "$dir/.venv" >> "$SETUP_LOG" 2>&1 || python3 -m venv "$dir/venv" >> "$SETUP_LOG" 2>&1 || true
+            fi
+            if [[ -f "$dir/requirements.txt" ]]; then
+                if [[ -x "$dir/.venv/bin/pip" ]]; then
+                    "$dir/.venv/bin/pip" install -r "$dir/requirements.txt" >> "$SETUP_LOG" 2>&1 || true
+                elif [[ -x "$dir/venv/bin/pip" ]]; then
+                    "$dir/venv/bin/pip" install -r "$dir/requirements.txt" >> "$SETUP_LOG" 2>&1 || true
+                fi
+            fi
         fi
-    done < <(find "$PROJECT_ROOT" -name "requirements.txt" \
-        -not -path "*/node_modules/*" -not -path "*/venv/*")
 
-    # Node: install devDeps, then verify critical packages exist
+        python3 - "$dir" "$PHASE4_LOG" << 'PYV'
+import os,sys,subprocess
+d,log=sys.argv[1],sys.argv[2]
+venv = os.path.join(d,'.venv') if os.path.isdir(os.path.join(d,'.venv')) else os.path.join(d,'venv')
+ok = os.path.isdir(venv)
+py = os.path.join(venv,'bin','python')
+with open(log,'a') as f:
+    f.write(f"[Python] venv_present={ok} path={venv}\n")
+    if ok and os.path.exists(py):
+        r=subprocess.run([py,'-c','import sys;print(sys.version)'],capture_output=True,text=True)
+        f.write(f"[Python] python_ok={r.returncode==0} version={r.stdout.strip()}\n")
+    else:
+        f.write("[Python] python_ok=False\n")
+PYV
+
+    done < <(find "$PROJECT_ROOT" \( -name "requirements.txt" -o -name "pyproject.toml" \) -not -path "*/node_modules/*")
+
+    # Node frontend/backend package install + verify scripts + node_modules
     while IFS= read -r pkg_file; do
         dir=$(dirname "$pkg_file")
-        echo "  [Node]   $dir"
-        if npm install --prefix "$dir" --include=dev >> "$SETUP_LOG" 2>&1; then
-            echo "  [Node]   ✅ npm install done"
-        else
-            echo "  [Node]   ⚠️  npm install issues"
-        fi
+        echo "[Node] target=$dir" | tee -a "$PHASE4_LOG"
+        npm install --prefix "$dir" --include=dev >> "$SETUP_LOG" 2>&1 || true
 
-        # Verify + surgically fix missing critical packages
-        python3 - "$dir" "$SETUP_LOG" << 'VERIFY_PY'
-import sys,os,subprocess,json
-fe_dir,log_file=sys.argv[1],sys.argv[2]
-pkg_path=os.path.join(fe_dir,"package.json")
-if not os.path.exists(pkg_path): sys.exit(0)
-with open(pkg_path) as f: pkg=json.load(f)
-declared={**pkg.get("dependencies",{}),**pkg.get("devDependencies",{})}
-critical=[p for p in ["vite","@vitejs/plugin-react","@vitejs/plugin-react-swc"] if p in declared]
-missing=[p for p in critical if not os.path.isdir(os.path.join(fe_dir,"node_modules",p))]
-if missing:
-    print(f"  [Node]   ⚠️  Missing: {missing} — fixing with direct install...")
-    with open(log_file,'a') as lf:
-        subprocess.run(["npm","install","--save-dev"]+missing,cwd=fe_dir,stdout=lf,stderr=lf)
-    still=[p for p in missing if not os.path.isdir(os.path.join(fe_dir,"node_modules",p))]
-    if still: print(f"  [Node]   ❌ Still missing: {still}")
-    else:     print(f"  [Node]   ✅ Fixed missing packages: {missing}")
-else:
-    print(f"  [Node]   ✅ All critical packages verified in node_modules")
-VERIFY_PY
+        python3 - "$dir" "$PHASE4_LOG" << 'NV'
+import os,sys,json
+d,log=sys.argv[1],sys.argv[2]
+p=os.path.join(d,'package.json')
+if not os.path.exists(p): sys.exit(0)
+try:
+    pkg=json.load(open(p))
+except Exception:
+    pkg={}
+s=pkg.get('scripts',{}) or {}
+has_dev='dev' in s
+has_start='start' in s
+nm=os.path.isdir(os.path.join(d,'node_modules'))
+with open(log,'a') as f:
+    f.write(f"[Node] node_modules_present={nm} dev_script={has_dev} start_script={has_start}\n")
+    deps={**pkg.get('dependencies',{}),**pkg.get('devDependencies',{})}
+    miss=[]
+    for k in list(deps.keys())[:80]:
+        kp=os.path.join(d,'node_modules',*k.split('/'))
+        if not os.path.isdir(kp):
+            miss.append(k)
+    if miss:
+        f.write(f"[Node] missing_declared_packages={miss[:20]}\n")
+NV
 
-    done < <(find "$PROJECT_ROOT" -name "package.json" \
-        -not -path "*/node_modules/*" -not -path "*/.next/*")
+    done < <(find "$PROJECT_ROOT" -name "package.json" -not -path "*/node_modules/*" -not -path "*/.next/*")
+
+    echo "  [Phase4] Verification snapshot:"
+    tail -n 20 "$PHASE4_LOG" | sed 's/^/    /'
 
     phase_done 4 '{"status":"ok"}'
-    lesson_record 4 "Installing & Verifying Dependencies" "ok" "Dependency installation completed (including verification/fixes)."
+    lesson_record 4 "Installing & Verifying Dependencies" "ok" "Dependency installation and verification logs generated (phase4_dependency_check.log)."
     lesson_record_from_file 4 "Installing & Verifying Dependencies" "warn" "$SETUP_LOG" "Dependency/install warnings"
+    lesson_record_from_file 4 "Installing & Verifying Dependencies" "warn" "$PHASE4_LOG" "Dependency verification findings"
 fi
 echo ""
 

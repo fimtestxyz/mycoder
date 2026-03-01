@@ -31,6 +31,7 @@ export default function TaskPage() {
   const { taskId } = useParams<{ taskId: string }>();
   const [task, setTask] = useState<Task | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  const [phase4Log, setPhase4Log] = useState<string[]>([]);
   const [lessons, setLessons] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -55,6 +56,7 @@ export default function TaskPage() {
     const data = await res.json();
     setTask(data.selectedTask ?? null);
     setLogs(data.logs ?? []);
+    setPhase4Log(data.phase4Log ?? []);
     setLessons(data.lessons ?? []);
   }, [taskId]);
 
@@ -222,6 +224,18 @@ export default function TaskPage() {
                 ))}
               </ul>
             )}
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-3xl border-zinc-200 bg-card shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-base">Phase 4 Dependency Verification</CardTitle>
+            <CardDescription className="text-xs">Separate install/verification log for package.json/node_modules and Python .venv checks.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="h-40 overflow-y-auto rounded-xl border border-zinc-200 bg-zinc-50 p-2 font-mono text-[11px]">
+              {phase4Log.length ? phase4Log.map((line, i) => <p key={`${i}-${line.slice(0,20)}`} className="whitespace-pre-wrap break-words text-zinc-700">{line}</p>) : <p className="text-zinc-500">No separate Phase 4 log found yet.</p>}
+            </div>
           </CardContent>
         </Card>
 

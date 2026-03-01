@@ -26,12 +26,31 @@ export async function GET(request: NextRequest) {
   const logs = selectedTaskId ? readTaskLogs(selectedTaskId, Math.min(1200, Math.max(50, lines))) : [];
   const lessons = selectedTask ? readPhaseLessons(selectedTask.currentPhase, 4) : [];
 
+  let phase4Log: string[] = [];
+  const outLine = logs.find((x) => x.includes("Output:"));
+  if (outLine) {
+    const m = outLine.match(/Output:\s+(.+)$/);
+    const projectPath = m?.[1]?.trim();
+    if (projectPath) {
+      try {
+        const fs = await import("node:fs");
+        const p = `${projectPath}/phase4_dependency_check.log`;
+        if (fs.existsSync(p)) {
+          phase4Log = fs.readFileSync(p, "utf-8").split(/\r?\n/).filter(Boolean).slice(-80);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   return NextResponse.json({
     tasks,
     selectedTask,
     logs,
     selectedTaskId,
     lessons,
+    phase4Log,
   });
 }
 
