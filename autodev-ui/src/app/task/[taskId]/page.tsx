@@ -38,6 +38,7 @@ export default function TaskPage() {
   const [nowTs, setNowTs] = useState(Date.now());
   const [copyOk, setCopyOk] = useState(false);
   const logContainerRef = useRef<HTMLDivElement | null>(null);
+  const preserveScrollRef = useRef<{ fromBottom: number } | null>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem(AUTO_SCROLL_KEY);
@@ -50,6 +51,13 @@ export default function TaskPage() {
 
   const load = useCallback(async () => {
     if (!taskId) return;
+
+    // Capture current scroll offset from bottom before replacing logs
+    if (!autoScroll && logContainerRef.current) {
+      const el = logContainerRef.current;
+      preserveScrollRef.current = { fromBottom: el.scrollHeight - el.scrollTop };
+    }
+
     const safeTaskId = String(taskId).replace(/[{}]/g, "").trim();
     const res = await fetch(`/api/autodev?taskId=${encodeURIComponent(safeTaskId)}&lines=100000`, { cache: "no-store" });
     const data = await res.json();
@@ -57,7 +65,7 @@ export default function TaskPage() {
     setLogs(data.logs ?? []);
     setPhase4Log(data.phase4Log ?? []);
     setLessons(data.lessons ?? []);
-  }, [taskId]);
+  }, [taskId, autoScroll]);
 
   useEffect(() => {
     load();
@@ -66,9 +74,20 @@ export default function TaskPage() {
   }, [load]);
 
   useEffect(() => {
-    if (!autoScroll || !logContainerRef.current) return;
     const el = logContainerRef.current;
-    el.scrollTop = el.scrollHeight;
+    if (!el) return;
+
+    if (autoScroll) {
+      el.scrollTop = el.scrollHeight;
+      return;
+    }
+
+    // Preserve user viewport position when new logs arrive
+    if (preserveScrollRef.current) {
+      const fromBottom = preserveScrollRef.current.fromBottom;
+      el.scrollTop = Math.max(0, el.scrollHeight - fromBottom);
+      preserveScrollRef.current = null;
+    }
   }, [logs, autoScroll]);
 
   useEffect(() => {
@@ -87,6 +106,8 @@ export default function TaskPage() {
     if (m > 0) return `${m}m ${s}s`;
     return `${s}s`;
   };
+
+  const visibleLogs = logs.length > 5000 ? logs.slice(-5000) : logs;
 
   const elapsedMs = (() => {
     if (!task?.startedAt) return null;
@@ -252,10 +273,13 @@ export default function TaskPage() {
             }}
             className="h-[70vh] overflow-y-auto rounded-2xl border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs"
           >
-            {logs.length === 0 ? (
+            {logs.length > 5000 && (
+              <p className="mb-2 text-[11px] text-zinc-500">Showing latest 5000 lines (total: {logs.length}).</p>
+            )}
+            {visibleLogs.length === 0 ? (
               <p className="text-zinc-500">No logs yet.</p>
             ) : (
-              logs.map((line, idx) => (
+              visibleLogs.map((line, idx) => (
                 <p key={`${idx}-${line.slice(0, 20)}`} className="whitespace-pre-wrap break-words text-zinc-700">{line}</p>
               ))
             )}
