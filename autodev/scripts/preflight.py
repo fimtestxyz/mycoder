@@ -129,7 +129,20 @@ def run(project_root):
                         print(f"  ❌ DEPS    {rel_dir}: {crit} not in node_modules")
             print(f"  ✅ nm     {rel_dir}/node_modules")
 
-    # ── 5. index.html has <div id="root"> ────────────────────────────────────
+    # ── 5. Service management scripts presence ───────────────────────────────
+    required_scripts = [
+        "scripts/manage_services.sh",
+        "start.sh",
+        "stop.sh",
+        "restart.sh",
+    ]
+    for relp in required_scripts:
+        p = os.path.join(project_root, relp)
+        if not os.path.exists(p):
+            warnings.append({"file": relp, "type": "MISSING_SERVICE_SCRIPT", "detail": "required service management script missing"})
+            print(f"  ⚠️  SVC    {relp}: missing")
+
+    # ── 6. index.html has <div id=\"root\"> ────────────────────────────────────
     for html_file in find_files(".html"):
         rel = os.path.relpath(html_file, project_root)
         with open(html_file) as f: src = f.read()

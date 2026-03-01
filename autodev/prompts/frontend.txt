@@ -15,6 +15,8 @@ Rules:
 - Domain/UI must be derived from the task (do not hardcode Todo-style UI unless requested).
 - Use TypeScript for React/Vue/Svelte TS projects when stack expects it.
 - Include all needed dependencies and scripts.
+- For Next.js projects, follow create-next-app conventions and ensure package scripts include dev/start/build.
+- Provide frontend run scripts compatible with scripts/manage_services.sh.
 - No placeholders or TODO comments.
 - Do NOT wrap content in markdown fences.
 - Paths must be relative.

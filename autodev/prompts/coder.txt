@@ -29,3 +29,11 @@ RULES
 6) Infer entity names, API paths, component names, forms, and validation from TASK + PLAN.
 7) Frontend must call backend endpoints defined by contract and render meaningful UI for the requested domain.
 8) Backend must include validation, error handling, and CORS for local frontend dev.
+9) Scaffolding policy:
+   - For Next.js frontend, scaffold structure consistent with `npx create-next-app` conventions.
+   - For NestJS backend, scaffold structure consistent with `npx @nestjs/cli` conventions.
+   - For Python backend, use uv workflow conventions (`uv init`, `uv sync`) and include pyproject.toml/uv.lock when relevant.
+10) Every generated project MUST include service management scripts:
+   - scripts/manage_services.sh
+   - start.sh, stop.sh, restart.sh
+   These scripts must be runnable and manage backend/frontend lifecycle.

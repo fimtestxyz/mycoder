@@ -374,6 +374,9 @@ else
         exit 1
     }
 
+    # Ensure generated project always has service management scripts
+    python3 "$SCRIPTS_DIR/ensure_service_scripts.py" "$PROJECT_ROOT" "$BACKEND_PORT" "$FRONTEND_PORT" >/dev/null 2>&1 || true
+
     # Update contract with discovered routes
     python3 "$SCRIPTS_DIR/contract_generator.py" \
         "$PLAN_FILE" "$PROJECT_ROOT" "$BACKEND_PORT" "$FRONTEND_PORT" "$CONTRACT_FILE"

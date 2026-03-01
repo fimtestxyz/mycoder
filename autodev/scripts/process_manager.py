@@ -118,6 +118,23 @@ def _backend_cmd(be_path, backend_port):
 def start_services(project_root, backend_port, frontend_port):
     pids = read_pids(project_root)
 
+    manage_script = os.path.join(project_root, "scripts", "manage_services.sh")
+    if os.path.exists(manage_script):
+        try:
+            out = subprocess.run(
+                ["bash", manage_script, "start", str(backend_port), str(frontend_port)],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+            )
+            print(out.stdout.strip())
+            if out.returncode == 0:
+                parsed = read_pids(project_root)
+                if parsed:
+                    return parsed
+        except Exception:
+            pass
+
     for svc, pid in pids.items():
         if is_running(pid):
             print(f"  [PM] Stopping existing {svc} (PID {pid})")
@@ -178,6 +195,23 @@ def start_services(project_root, backend_port, frontend_port):
 
 
 def stop_services(project_root, backend_port, frontend_port):
+    manage_script = os.path.join(project_root, "scripts", "manage_services.sh")
+    if os.path.exists(manage_script):
+        try:
+            out = subprocess.run(
+                ["bash", manage_script, "stop", str(backend_port), str(frontend_port)],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+            )
+            if out.stdout.strip():
+                print(out.stdout.strip())
+            if out.returncode == 0:
+                print("  [PM] All services stopped")
+                return
+        except Exception:
+            pass
+
     pids = read_pids(project_root)
     for svc, pid in pids.items():
         if is_running(pid):

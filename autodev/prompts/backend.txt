@@ -14,7 +14,10 @@ FILE: relative/path/to/another/file.ext
 Rules:
 - API domain/resources/endpoint names must come from Task (never hardcode Todo endpoints unless requested).
 - Write complete runnable code, no placeholders.
-- Include dependency manifest (requirements.txt / package.json, etc).
+- Include dependency manifest (requirements.txt / package.json / pyproject.toml as appropriate).
+- If Python backend: follow uv-style project/dependency conventions (`uv init` / `uv sync` compatible layout).
+- If NestJS backend: follow @nestjs/cli style structure and scripts.
+- Provide backend run scripts compatible with scripts/manage_services.sh.
 - Include local dev CORS policy for frontend integration.
 - Add input validation + error handling.
 - Do NOT wrap content in markdown fences.
