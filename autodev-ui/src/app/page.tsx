@@ -20,6 +20,94 @@ type Task = {
 
 const PINNED_KEY = "autodev.tasks.pinned.v1";
 
+type TaskRowProps = {
+  task: Task;
+  isPinned: boolean;
+  isDeleting: boolean;
+  onTogglePin: (taskId: string) => void;
+  onDelete: (taskId: string) => void;
+  onHoverIn: (task: Task) => void;
+  onHoverOut: (taskId: string) => void;
+};
+
+function TaskRow({ task, isPinned, isDeleting, onTogglePin, onDelete, onHoverIn, onHoverOut }: TaskRowProps) {
+  const isCanceled = task.status === "canceled";
+  const statusColor =
+    task.status === "running"
+      ? "bg-emerald-500"
+      : task.status === "completed"
+        ? "bg-sky-500"
+        : task.status === "failed"
+          ? "bg-rose-500"
+          : task.status === "stopped"
+            ? "bg-amber-500"
+            : task.status === "canceled"
+              ? "bg-zinc-500"
+              : "bg-zinc-400";
+
+  return (
+    <motion.div
+      layout
+      whileHover={{ y: -2 }}
+      transition={{ duration: 0.15 }}
+      className="group relative"
+      onMouseEnter={() => onHoverIn(task)}
+      onMouseLeave={() => onHoverOut(task.taskId)}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: isDeleting ? 0 : 1, y: isDeleting ? -8 : 0 }}
+    >
+      <Link
+        href={`/task/${task.taskId}`}
+        key={task.taskId}
+        className={`block rounded-2xl border px-3 py-2 hover:border-zinc-400 ${
+          isCanceled ? "border-zinc-200 bg-zinc-50/70 opacity-45 grayscale-[0.35]" : "border-zinc-200"
+        }`}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className={`size-2 rounded-full ${statusColor} ${task.status === "running" ? "animate-pulse" : ""}`} />
+            <p className="text-[11px] text-zinc-500 truncate">{task.taskId}</p>
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onTogglePin(task.taskId);
+              }}
+              className="inline-flex items-center justify-center rounded-md p-1 hover:bg-zinc-100"
+              title={isPinned ? "Unpin task" : "Pin task"}
+            >
+              <Star className={`size-4 ${isPinned ? "fill-yellow-400 text-yellow-500" : "text-zinc-400"}`} />
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                void onDelete(task.taskId);
+              }}
+              className="inline-flex items-center justify-center rounded-md p-1 text-rose-500 hover:bg-rose-50"
+              title="Delete task and artifacts"
+            >
+              <Trash2 className="size-4" />
+            </button>
+            <Badge className="capitalize">{task.status}</Badge>
+          </div>
+        </div>
+        <p className="mt-1 line-clamp-2 text-sm">{task.goal}</p>
+      </Link>
+
+      <div className="pointer-events-none absolute left-0 right-0 -bottom-8 hidden overflow-hidden rounded-md border border-zinc-200 bg-background/95 px-2 py-1 group-hover:block">
+        <p className="inline-block whitespace-nowrap text-[11px] text-zinc-600 animate-[marquee_16s_linear_infinite]">
+          {task.goal} • {task.goal} • {task.goal}
+        </p>
+      </div>
+    </motion.div>
+  );
+}
+
 export default function Home() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [goal, setGoal] = useState("");
@@ -116,84 +204,7 @@ export default function Home() {
   const pinnedTasks = filteredTasks.filter((t) => pinned.includes(t.taskId));
   const normalTasks = filteredTasks.filter((t) => !pinned.includes(t.taskId));
 
-  const TaskRow = ({ task }: { task: Task }) => {
-    const isPinned = pinned.includes(task.taskId);
-    const isCanceled = task.status === "canceled";
-    const statusColor =
-      task.status === "running"
-        ? "bg-emerald-500"
-        : task.status === "completed"
-          ? "bg-sky-500"
-          : task.status === "failed"
-            ? "bg-rose-500"
-            : task.status === "stopped"
-              ? "bg-amber-500"
-              : task.status === "canceled"
-                ? "bg-zinc-500"
-                : "bg-zinc-400";
 
-    return (
-      <motion.div
-        layout
-        whileHover={{ y: -2 }}
-        transition={{ duration: 0.15 }}
-        className="group relative"
-        onMouseEnter={() => setHoveredTask(task)}
-        onMouseLeave={() => setHoveredTask((prev) => (prev?.taskId === task.taskId ? null : prev))}
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: deletingTaskIds.includes(task.taskId) ? 0 : 1, y: deletingTaskIds.includes(task.taskId) ? -8 : 0 }}
-      >
-        <Link
-          href={`/task/${task.taskId}`}
-          key={task.taskId}
-          className={`block rounded-2xl border px-3 py-2 hover:border-zinc-400 ${
-            isCanceled ? "border-zinc-200 bg-zinc-50/70 opacity-45 grayscale-[0.35]" : "border-zinc-200"
-          }`}
-        >
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className={`size-2 rounded-full ${statusColor} ${task.status === "running" ? "animate-pulse" : ""}`} />
-              <p className="text-[11px] text-zinc-500 truncate">{task.taskId}</p>
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  togglePin(task.taskId);
-                }}
-                className="inline-flex items-center justify-center rounded-md p-1 hover:bg-zinc-100"
-                title={isPinned ? "Unpin task" : "Pin task"}
-              >
-                <Star className={`size-4 ${isPinned ? "fill-yellow-400 text-yellow-500" : "text-zinc-400"}`} />
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  void deleteTask(task.taskId);
-                }}
-                className="inline-flex items-center justify-center rounded-md p-1 text-rose-500 hover:bg-rose-50"
-                title="Delete task and artifacts"
-              >
-                <Trash2 className="size-4" />
-              </button>
-              <Badge className="capitalize">{task.status}</Badge>
-            </div>
-          </div>
-          <p className="mt-1 line-clamp-2 text-sm">{task.goal}</p>
-        </Link>
-
-        <div className="pointer-events-none absolute left-0 right-0 -bottom-8 hidden overflow-hidden rounded-md border border-zinc-200 bg-background/95 px-2 py-1 group-hover:block">
-          <p className="inline-block whitespace-nowrap text-[11px] text-zinc-600 animate-[marquee_16s_linear_infinite]">
-            {task.goal} • {task.goal} • {task.goal}
-          </p>
-        </div>
-      </motion.div>
-    );
-  };
 
   return (
     <main className="min-h-screen bg-background p-3 md:p-6">
@@ -230,7 +241,16 @@ export default function Home() {
                     <p className="mb-2 text-xs font-medium text-zinc-500">PINNED</p>
                     <div className="space-y-2">
                       {pinnedTasks.map((task) => (
-                        <TaskRow key={`p-${task.taskId}`} task={task} />
+                        <TaskRow
+                          key={`p-${task.taskId}`}
+                          task={task}
+                          isPinned={pinned.includes(task.taskId)}
+                          isDeleting={deletingTaskIds.includes(task.taskId)}
+                          onTogglePin={togglePin}
+                          onDelete={deleteTask}
+                          onHoverIn={setHoveredTask}
+                          onHoverOut={(id) => setHoveredTask((prev) => (prev?.taskId === id ? null : prev))}
+                        />
                       ))}
                     </div>
                   </div>
@@ -240,7 +260,16 @@ export default function Home() {
                   <p className="mb-2 text-xs font-medium text-zinc-500">ALL TASKS</p>
                   <div className="space-y-2">
                     {normalTasks.map((task) => (
-                      <TaskRow key={task.taskId} task={task} />
+                      <TaskRow
+                        key={task.taskId}
+                        task={task}
+                        isPinned={pinned.includes(task.taskId)}
+                        isDeleting={deletingTaskIds.includes(task.taskId)}
+                        onTogglePin={togglePin}
+                        onDelete={deleteTask}
+                        onHoverIn={setHoveredTask}
+                        onHoverOut={(id) => setHoveredTask((prev) => (prev?.taskId === id ? null : prev))}
+                      />
                     ))}
                     {filteredTasks.length === 0 && <p className="text-sm text-zinc-500">No matching tasks.</p>}
                   </div>

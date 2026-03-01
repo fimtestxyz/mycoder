@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
   }
 
   const selectedTaskId = selectedTask?.taskId ?? null;
-  const logs = selectedTaskId ? readTaskLogs(selectedTaskId, Math.min(200000, Math.max(200, lines))) : [];
+  const logs = selectedTask ? readTaskLogs(selectedTask, Math.min(200000, Math.max(200, lines))) : [];
   const lessons = selectedTask ? readPhaseLessons(selectedTask.currentPhase, 4) : [];
 
   let phase4Log: string[] = [];

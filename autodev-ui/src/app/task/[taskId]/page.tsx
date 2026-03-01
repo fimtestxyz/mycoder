@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pause, Play, Trash2 } from "lucide-react";
+import { ChevronDown, Pause, Play, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,20 @@ type Task = {
 };
 
 const AUTO_SCROLL_KEY = "autodev.task.logs.autoscroll.v1";
+
+type SectionProps = { title: string; defaultOpen?: boolean; children: ReactNode };
+
+function Section({ title, defaultOpen = true, children }: SectionProps) {
+  return (
+    <details open={defaultOpen} className="group rounded-3xl border border-zinc-200 bg-card shadow-sm">
+      <summary className="cursor-pointer list-none px-5 py-4 text-sm font-medium flex items-center justify-between">
+        <span>{title}</span>
+        <ChevronDown className="size-4 text-zinc-500 transition-transform duration-200 group-open:rotate-180" />
+      </summary>
+      <div className="px-5 pb-5">{children}</div>
+    </details>
+  );
+}
 
 export default function TaskPage() {
   const { taskId } = useParams<{ taskId: string }>();
@@ -162,16 +176,7 @@ export default function TaskPage() {
     }
   }, [task?.status]);
 
-  const Section = ({ title, defaultOpen = true, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) => (
-    <details open={defaultOpen} className="group rounded-3xl border border-zinc-200 bg-card shadow-sm">
-      <summary className="cursor-pointer list-none px-5 py-4 text-sm font-medium flex items-center justify-between">
-        <span>{title}</span>
-        <span className="text-xs text-zinc-500 group-open:hidden">Expand</span>
-        <span className="text-xs text-zinc-500 hidden group-open:inline">Collapse</span>
-      </summary>
-      <div className="px-5 pb-5">{children}</div>
-    </details>
-  );
+
 
   return (
     <main className="min-h-screen bg-background p-3 md:p-6">

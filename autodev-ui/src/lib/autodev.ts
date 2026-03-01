@@ -76,7 +76,7 @@ function isPidAlive(pid: number) {
   }
 }
 
-function tailLines(filePath: string, lines = 200): string[] {
+export function tailLines(filePath: string, lines = 200): string[] {
   if (!fs.existsSync(filePath)) return [];
   const content = fs.readFileSync(filePath, "utf-8");
   return content.split(/\r?\n/).filter(Boolean).slice(-lines);
@@ -169,10 +169,13 @@ export function getTask(taskId: string): TaskRecord | null {
   return task ? refreshTask(task) : null;
 }
 
-export function readTaskLogs(taskId: string, lines = 250): string[] {
-  const task = getTask(taskId);
-  if (!task) return [];
-  return tailLines(task.logFile, lines);
+export function readTaskLogs(taskOrId: TaskRecord | string, lines = 250): string[] {
+  if (typeof taskOrId === "string") {
+    const task = getTask(taskOrId);
+    if (!task) return [];
+    return tailLines(task.logFile, lines);
+  }
+  return tailLines(taskOrId.logFile, lines);
 }
 
 function spawnTaskProcess(task: TaskRecord, resume: boolean) {
