@@ -210,10 +210,23 @@ phase_reminder() {
     local phase="$1" name="$2"
     local reminder
 
-    # Apply latest versioned playbook snippets first (if available)
-    if [[ -f "$LESSONS_DIR/latest.md" ]]; then
-        echo "  📘 Latest Lessons Playbook (applied):"
-        awk 'NR<=16 {print}' "$LESSONS_DIR/latest.md" | sed 's/^/     /'
+    # Apply compact token-optimized version first (if available)
+    if [[ -f "$LESSONS_DIR/latest_compact.json" ]]; then
+        echo "  📘 Compact Lessons Pack (applied):"
+        python3 - "$LESSONS_DIR/latest_compact.json" "$phase" << 'PY'
+import json,sys
+p=sys.argv[1]; phase=str(sys.argv[2])
+try:
+    d=json.load(open(p))
+except Exception:
+    raise SystemExit(0)
+summary=d.get('version_summary','')
+if summary: print(f"- {summary}")
+for g in (d.get('global') or [])[:4]:
+    print(f"- {g}")
+for x in (d.get('phases',{}).get(phase) or [])[:5]:
+    print(f"- {x}")
+PY
         echo ""
     fi
 
