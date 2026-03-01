@@ -1,0 +1,63 @@
+
+╔══════════════════════════════════════════╗
+║   AutoDev — Contract-Driven Loop v6      ║
+╚══════════════════════════════════════════╝
+  Task:    builfefefefefefefefefeffefasdfefefefefef
+  Output:  /Users/wwkoon/.openclaw/workspace/mycoder/autodev/workspace/builfefefefefefefefefeffefasdfefefefefef
+  Models:  qwen2.5-coder:32b / qwen2.5-coder:32b / deepseek-coder:33b
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Phase 1: Architecture Planning
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  [Planner] → qwen2.5-coder:32b (timeout: 120s)...
+  [Planner] Done (441 chars)
+{
+  "project_type": "Web App",
+  "tech_stack": [
+    "React",
+    "TypeScript",
+    "FastAPI",
+    "SQLite"
+  ],
+  "modules": [
+    {
+      "name": "Frontend",
+      "description": "React UI",
+      "technologies": [
+        "React",
+        "TypeScript",
+        "Vite"
+      ]
+    },
+    {
+      "name": "Backend",
+      "description": "FastAPI REST API",
+      "technologies": [
+        "FastAPI",
+        "SQLite",
+        "SQLAlchemy"
+      ]
+    }
+  ],
+  "folder_structure": [
+    "frontend/",
+    "backend/"
+  ],
+  "dependencies": [
+    "react",
+    "fastapi",
+    "uvicorn",
+    "sqlalchemy"
+  ]
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Phase 2: Generating Test Contract
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  [Contract] Generated: 1 API tests, 1 frontend checks
+  Initial contract: 1 API tests (will expand after codegen)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Phase 3: Code Generation
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  [Coder] → qwen2.5-coder:32b (timeout: 600s)...

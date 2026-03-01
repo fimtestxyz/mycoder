@@ -1,12 +1,23 @@
 {
-  "version": "1.0",
+  "version": "2.0",
   "backend": {
     "base_url": "http://localhost:8000",
     "endpoints": [
       {
         "method": "GET",
-        "path": "/docs",
-        "expect_status": 200
+        "path": "/",
+        "expect_status": [
+          200,
+          204
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/health",
+        "expect_status": [
+          200,
+          204
+        ]
       }
     ]
   },
@@ -17,8 +28,8 @@
         "path": "/",
         "expect_status": 200,
         "expect_html_contains": [
-          "<div id=\"root\"",
-          "<!DOCTYPE"
+          "<html",
+          "</html"
         ]
       }
     ]

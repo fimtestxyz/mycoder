@@ -1,68 +1,15 @@
-FILE: backend/main.py
-```python
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-import sqlite3
-from pydantic import BaseModel
+Based on the provided information and the tests that are failing, it seems like there might be a few issues at play here. Here's how you can fix them:
 
-app = FastAPI()
+1. Backend startup: The backend service is not running properly. This could be due to syntax errors in your `main.py` file or missing dependencies. You should check for any syntax errors and make sure all the packages listed in your `requirements.txt` are installed correctly. 
 
-# Enable CORS for React frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+2. Frontend startup: Similar to the backend, there might be a problem with the frontend service not starting properly. This could be due to issues with the React scripts or missing dependencies. You should check for any syntax errors and make sure all the packages listed in your `package.json` are installed correctly.
 
-# SQLite database setup
-conn = sqlite3.connect('todos.db', check_same_thread=False)
-cursor = conn.cursor()
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS todos  (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    completed BOOLEAN DEFAULT FALSE
-)
-''')
-conn.commit()
+3. GET /: The GET request to the root URL is failing because the backend service is not running or there's a problem with the route definition. 
 
-class Todo(BaseModel):
-    title: str
-    completed: bool
+4. GET /health: Similar to the previous test, this one fails because the backend service is not running or there's a problem with the route definition.
 
-class TodoIn(Todo):
-    pass
+5. POST /upload/: This test also fails for similar reasons as above.
 
-class TodoOut(Todo):
-    id: int
+6. Frontend GET /: The frontend service is failing to make a GET request to the root URL, which could be due to CORS issues or a wrong route definition. 
 
-@app.get("/todos", response_model=list[TodoOut])
-def read_todos():
-    cursor.execute("SELECT * FROM todos")
-    rows = cursor.fetchall()
-    return [{"id": row[0], "title": row[1], "completed": bool(row[2])} for row in rows]
-
-@app.post("/todos", response_model=TodoOut, status_code=201)
-def create_todo(todo: TodoIn):
-    cursor.execute("INSERT INTO todos (title, completed) VALUES (?, ?)", (todo.title, todo.completed))
-    conn.commit()
-    return {"id": cursor.lastrowid, "title": todo.title, "completed": todo.completed}
-
-@app.put("/todos/{todo_id}", response_model=TodoOut)
-def update_todo(todo_id: int, todo: Todo):
-    cursor.execute("UPDATE todos SET title = ?, completed = ? WHERE id = ?", (todo.title, todo.completed, todo_id))
-    conn.commit()
-    if cursor.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Todo not found")
-    return {"id": todo_id, "title": todo.title, "completed": todo.completed}
-
-@app.delete("/todos/{todo_id}", response_model=dict)
-def delete_todo(todo_id: int):
-    cursor.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
-    conn.commit()
-    if cursor.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Todo not found")
-    return {"message": "Todo deleted"}
-```
+Please note that without more specific information about your project setup and codebase, it's hard to provide exact fixes for these problems. If you can provide more details, I would be happy to help further.

@@ -1,71 +1,65 @@
-You are an expert full-stack software engineer. Implement a complete, working, runnable project.
+You are an expert full-stack software engineer. Implement a complete, runnable project from the goal + plan + contract.
 
 TASK:
-Build a simple Todo App with a React frontend and a Python FastAPI backend
+Audio Workstation using React, Web Audio API and backend python fastapi. a sleek dark-mod Tailwind CSS. feature: 1) A file uploader for MP3s, 2) A real-time Frequency Visualizer using HTML5 Canvas, 3) Interactive sliders for Volume, Playback Rate, and a BiquadFilter (Low-pass), and 4) A 'Record' button to capture the processed output. Ensure all audio nodes are properly connected (Source -> Filter -> Gain -> Destination)
 
 ARCHITECTURE PLAN:
 {
-  "project_type": "Web App",
-  "tech_stack": ["React", "TypeScript", "FastAPI", "SQLite"],
+  "project_type": "Full-stack Web Application",
+  "tech_stack": ["React", "Web Audio API", "FastAPI", "Tailwind CSS", "HTML5 Canvas"],
   "modules": [
-    {"name": "Frontend", "description": "React UI", "technologies": ["React", "TypeScript", "Vite"]},
-    {"name": "Backend", "description": "FastAPI REST API", "technologies": ["FastAPI", "SQLite", "SQLAlchemy"]}
+    {
+      "name": "Frontend",
+      "description": "Handles user interface and audio processing.",
+      "technologies": ["React", "Web Audio API", "Tailwind CSS", "HTML5 Canvas"]
+    },
+    {
+      "name": "Backend",
+      "description": "Provides file handling and storage services.",
+      "technologies": ["FastAPI"]
+    }
   ],
   "folder_structure": ["frontend/", "backend/"],
-  "dependencies": ["react", "fastapi", "uvicorn", "sqlalchemy"]
+  "dependencies": [
+    "react",
+    "react-dom",
+    "tailwindcss",
+    "fastapi",
+    "uvicorn"
+  ]
 }
 
-REQUIRED ENDPOINTS (implement ALL of these exactly):
-Implement these exact endpoints: GET /docs
+REQUIRED CONTRACT TEST TARGETS (implement these routes/capabilities):
+Implement these exact endpoints: GET /, GET /health
 
 ═══════════════════════════════════════════════════════
-OUTPUT FORMAT — CRITICAL — follow exactly:
+OUTPUT FORMAT — STRICT
 ═══════════════════════════════════════════════════════
-
 FILE: relative/path/to/file.ext
-<complete file content — plain code, NO markdown fences>
+<complete file content as raw code>
 
 FILE: another/path.ext
-<complete file content — plain code, NO markdown fences>
+<complete file content as raw code>
 
 ═══════════════════════════════════════════════════════
-RULES:
+RULES
 ═══════════════════════════════════════════════════════
-1. Output ONLY FILE: blocks. No explanation before or after.
-2. NEVER wrap file content in ``` or ```python or ```json — write raw code directly.
-3. Write COMPLETE code — no "// TODO", no "...rest of code", no truncation.
-4. All files must be production-ready and runnable.
-
-REQUIRED FILES AND THEIR EXACT CONTENT:
-
-FILE: backend/main.py
-- FastAPI app with all CRUD endpoints from CONTRACT_SUMMARY
-- CORSMiddleware: allow_origins=["http://localhost:5173"]
-- SQLite database using sqlite3 directly (no SQLAlchemy needed)
-- Pydantic models matching the endpoint response shapes
-
-FILE: backend/requirements.txt
-fastapi
-uvicorn[standard]
-pydantic
-
-FILE: frontend/package.json
-- @vitejs/plugin-react MUST be in devDependencies (not dependencies)
-- vite MUST be in devDependencies
-
-FILE: frontend/index.html
-- Must have: <div id="root"></div>
-- Must have: <script type="module" src="/src/main.tsx"></script>
-
-FILE: frontend/vite.config.ts
-- Use @vitejs/plugin-react plugin
-- Add server.proxy: { '/api': { target: 'http://localhost:8000', rewrite: ... } }
-
-FILE: frontend/src/main.tsx
-- React entry point mounting App into #root
-
-FILE: frontend/src/App.tsx
-- Working CRUD UI using fetch('/api/todos') calls
-- Shows list of items, add form, delete button
-
-FILE: README.md
+1) Output ONLY FILE: blocks. No explanation.
+2) Never use markdown code fences.
+3) No placeholders / TODO / truncated code.
+4) Implement a dynamic domain based on TASK (no hardcoded "todo" naming unless task asks for it).
+5) Build a real full-stack app with frontend + backend + docs + run instructions.
+6) Infer entity names, API paths, component names, forms, and validation from TASK + PLAN.
+7) Frontend must call backend endpoints defined by contract and render meaningful UI for the requested domain.
+8) Backend must include validation, error handling, and CORS for local frontend dev.
+9) You MUST explicitly determine and include required installable libraries for BOTH frontend and backend.
+   - Frontend: ensure package.json dependencies/devDependencies include all imports used in code.
+   - Backend: ensure requirements.txt or pyproject.toml includes all Python imports used in app code.
+10) Scaffolding policy:
+   - For Next.js frontend, scaffold structure consistent with `npx create-next-app` conventions.
+   - For NestJS backend, scaffold structure consistent with `npx @nestjs/cli` conventions.
+   - For Python backend, use uv workflow conventions (`uv init`, `uv sync`) and include pyproject.toml/uv.lock when relevant.
+10) Every generated project MUST include service management scripts:
+   - scripts/manage_services.sh
+   - start.sh, stop.sh, restart.sh
+   These scripts must be runnable and manage backend/frontend lifecycle.

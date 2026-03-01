@@ -1,0 +1,12 @@
+{"phase": 6, "phase_name": "Launching Services", "status": "failed", "summary": "Service health checks timed out (connection refused / startup failure). Inspect backend.log and frontend.log before UAT."}
+{"phase": 6, "phase_name": "Launching Services", "status": "failed", "summary": "process_manager could not discover valid startup commands for backend/frontend"}
+{"phase": 6, "phase_name": "Launching Services", "status": "failed", "summary": "Service health checks timed out (connection refused / startup failure). Inspect backend.log and frontend.log before UAT."}
+{"phase": 6, "phase_name": "Launching Services", "status": "failed", "summary": "process_manager could not discover valid startup commands for backend/frontend"}
+{"phase": 6, "phase_name": "Launching Services", "status": "failed", "summary": "Service health checks timed out (connection refused / startup failure). Inspect backend.log and frontend.log before UAT."}
+{"phase": 6, "phase_name": "Launching Services", "status": "failed", "summary": "process_manager could not discover valid startup commands for backend/frontend"}
+{"phase": 6, "phase_name": "Launching Services", "status": "failed", "summary": "Service health checks timed out (connection refused / startup failure). Inspect backend.log and frontend.log before UAT."}
+{"phase": 6, "phase_name": "Launching Services", "status": "failed", "summary": "Service health checks timed out (connection refused / startup failure). Inspect backend.log and frontend.log before UAT."}
+{"phase": 6, "phase_name": "Launching Services", "status": "failed", "summary": "Service health checks timed out (connection refused / startup failure). Inspect backend.log and frontend.log before UAT."}
+{"phase": 6, "phase_name": "Launching Services", "status": "failed", "summary": "Backend startup errors :: Traceback (most recent call last):     raise RuntimeError(multipart_not_installed_error) from None RuntimeError: Form data requires \"python-multipart\" to be installed.  "}
+{"phase": 6, "phase_name": "Launching Services", "status": "failed", "summary": "Service health checks timed out (connection refused / startup failure). Inspect backend.log and frontend.log before UAT."}
+{"phase": 6, "phase_name": "Launching Services", "status": "failed", "summary": "Backend startup errors :: Traceback (most recent call last):     raise RuntimeError(multipart_not_installed_error) from None RuntimeError: Form data requires \"python-multipart\" to be installed.  "}

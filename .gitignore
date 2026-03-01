@@ -1,1 +1,5 @@
 autodev/workspace/*
+
+autodev/logs/*
+autodev/scripts/__pycache__/*
+autodev-ui/tasks/task_*.json

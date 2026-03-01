@@ -1,68 +1,11 @@
-FILE: backend/main.py
-```python
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-import sqlite3
-from pydantic import BaseModel
+Based on the provided information and the tests that are failing, it seems like there might be a few issues at play here. Here's how you can fix them:
 
-app = FastAPI()
+1. Backend startup failure: This is likely due to the backend service not being able to bind to port 8000. The error message suggests that this could be due to an issue with the operating system not supporting the SO_REUSEPORT socket option which is required by uvicorn when reuse_port=True. You can resolve this issue by setting the environment variable UVICORN_RELOAD=true before starting your application, or by changing the value of the reuse_port parameter to False in your uvicorn.run() call.
 
-# Enable CORS for React frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+2. Frontend startup failure: This is likely due to the frontend service not being able to find the react-scripts command. You can resolve this issue by installing the necessary dependencies for the frontend project. In a terminal, navigate to the root directory of your frontend project and run `npm install` or `yarn install` depending on which package manager you are using.
 
-# SQLite database setup
-conn = sqlite3.connect('todos.db', check_same_thread=False)
-cursor = conn.cursor()
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS todos  (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    completed BOOLEAN DEFAULT FALSE
-)
-''')
-conn.commit()
+3. GET /, GET /health, POST /upload/ failures: These are likely due to syntax errors in your main.py file. The error message suggests that there is a syntax error in the main.py file at line 27. You can resolve this issue by fixing the syntax error in the main.py file.
 
-class Todo(BaseModel):
-    title: str
-    completed: bool
+4. Frontend GET / failure: This is likely due to an issue with the frontend service not being able to find the index.html file or the App component not rendering any content. You can resolve this issue by ensuring that your public/index.html file has a `<div id="root"></div>` element and that your App.tsx file is correctly rendering some content.
 
-class TodoIn(Todo):
-    pass
-
-class TodoOut(Todo):
-    id: int
-
-@app.get("/todos", response_model=list[TodoOut])
-def read_todos():
-    cursor.execute("SELECT * FROM todos")
-    rows = cursor.fetchall()
-    return [{"id": row[0], "title": row[1], "completed": bool(row[2])} for row in rows]
-
-@app.post("/todos", response_model=TodoOut, status_code=201)
-def create_todo(todo: TodoIn):
-    cursor.execute("INSERT INTO todos (title, completed) VALUES (?, ?)", (todo.title, todo.completed))
-    conn.commit()
-    return {"id": cursor.lastrowid, "title": todo.title, "completed": todo.completed}
-
-@app.put("/todos/{todo_id}", response_model=TodoOut)
-def update_todo(todo_id: int, todo: Todo):
-    cursor.execute("UPDATE todos SET title = ?, completed = ? WHERE id = ?", (todo.title, todo.completed, todo_id))
-    conn.commit()
-    if cursor.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Todo not found")
-    return {"id": todo_id, "title": todo.title, "completed": todo.completed}
-
-@app.delete("/todos/{todo_id}", response_model=dict)
-def delete_todo(todo_id: int):
-    cursor.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
-    conn.commit()
-    if cursor.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Todo not found")
-    return {"message": "Todo deleted"}
-```
+Please note that these are just potential solutions based on the information provided. The exact solution may vary depending on the specifics of your project setup and codebase.

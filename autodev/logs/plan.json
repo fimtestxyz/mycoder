@@ -1,10 +1,24 @@
 {
-  "project_type": "Web App",
-  "tech_stack": ["React", "TypeScript", "FastAPI", "SQLite"],
+  "project_type": "Full-stack Web Application",
+  "tech_stack": ["React", "Web Audio API", "FastAPI", "Tailwind CSS", "HTML5 Canvas"],
   "modules": [
-    {"name": "Frontend", "description": "React UI", "technologies": ["React", "TypeScript", "Vite"]},
-    {"name": "Backend", "description": "FastAPI REST API", "technologies": ["FastAPI", "SQLite", "SQLAlchemy"]}
+    {
+      "name": "Frontend",
+      "description": "Handles user interface and audio processing.",
+      "technologies": ["React", "Web Audio API", "Tailwind CSS", "HTML5 Canvas"]
+    },
+    {
+      "name": "Backend",
+      "description": "Provides file handling and storage services.",
+      "technologies": ["FastAPI"]
+    }
   ],
   "folder_structure": ["frontend/", "backend/"],
-  "dependencies": ["react", "fastapi", "uvicorn", "sqlalchemy"]
+  "dependencies": [
+    "react",
+    "react-dom",
+    "tailwindcss",
+    "fastapi",
+    "uvicorn"
+  ]
 }

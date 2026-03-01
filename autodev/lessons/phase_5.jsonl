@@ -1,0 +1,9 @@
+{"phase": 5, "phase_name": "Static Pre-flight Checks", "status": "ok", "summary": "Preflight passed cleanly before launch."}
+{"phase": 5, "phase_name": "Static Pre-flight Checks", "status": "ok", "summary": "Preflight passed cleanly before launch."}
+{"phase": 5, "phase_name": "Static Pre-flight Checks", "status": "ok", "summary": "Preflight passed cleanly before launch."}
+{"phase": 5, "phase_name": "Static Pre-flight Checks", "status": "warn", "summary": "Static preflight still failed after repair attempt; runtime phase must diagnose."}
+{"phase": 5, "phase_name": "Static Pre-flight Checks", "status": "failed", "summary": "Preflight errors ::   \"errors\": [   \"warnings\": [] "}
+{"phase": 5, "phase_name": "Static Pre-flight Checks", "status": "warn", "summary": "Static preflight still failed after repair attempt; runtime phase must diagnose."}
+{"phase": 5, "phase_name": "Static Pre-flight Checks", "status": "failed", "summary": "Preflight errors ::   \"errors\": [   \"warnings\": [] "}
+{"phase": 5, "phase_name": "Static Pre-flight Checks", "status": "warn", "summary": "Static preflight still failed after repair attempt; runtime phase must diagnose."}
+{"phase": 5, "phase_name": "Static Pre-flight Checks", "status": "failed", "summary": "Preflight errors ::   \"errors\": [   \"warnings\": [] "}

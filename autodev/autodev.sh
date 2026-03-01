@@ -138,7 +138,7 @@ ollama_call() {
     payload=$(python3 -c "
 import json,sys
 print(json.dumps({'model':sys.argv[1],'prompt':sys.argv[2],'stream':False,
-  'options':{'temperature':0.1,'num_ctx':8192,'num_predict':4096}}))" "$model" "$prompt")
+  'options':{'temperature':0.1,'num_ctx':32768,'num_predict':4096}}))" "$model" "$prompt")
     api_response=$(curl -s --max-time "$timeout" \
         -H "Content-Type: application/json" -d "$payload" \
         "$OLLAMA_API/api/generate" 2>&1)

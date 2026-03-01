@@ -1,0 +1,13 @@
+{
+  "status": "stopped",
+  "goal": "builfefefefefefefefefeffefasdfefefefefef",
+  "pid": null,
+  "startedAt": "2026-02-28T23:13:48.010Z",
+  "updatedAt": "2026-02-28T23:20:38.810Z",
+  "logFile": "/Users/wwkoon/.openclaw/workspace/mycoder/.autodev-ui-runtime/autodev.log",
+  "currentPhase": 3,
+  "phaseTitle": "Code Generation",
+  "progress": 38,
+  "lastSummary": "Run stopped by user.",
+  "exitCode": null
+}

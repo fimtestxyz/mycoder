@@ -1,41 +1,38 @@
 {
-  "version": "1.0",
+  "version": "2.0",
   "backend": {
     "base_url": "http://localhost:8000",
     "endpoints": [
       {
         "method": "GET",
-        "path": "/docs",
-        "expect_status": 200
-      },
-      {
-        "method": "GET",
-        "path": "/todos",
-        "expect_status": 200,
-        "expect_body_type": "array"
-      },
-      {
-        "method": "POST",
-        "path": "/todos",
-        "expect_status": [
-          200,
-          201
-        ],
-        "request_body": {
-          "title": "UAT todo",
-          "name": "UAT todo"
-        },
-        "expect_body_keys": [
-          "id"
-        ]
-      },
-      {
-        "method": "DELETE",
-        "path": "/todos/{id}",
+        "path": "/",
         "expect_status": [
           200,
           204
         ]
+      },
+      {
+        "method": "GET",
+        "path": "/health",
+        "expect_status": [
+          200,
+          204
+        ]
+      },
+      {
+        "method": "POST",
+        "path": "/upload/",
+        "expect_status": [
+          200,
+          201,
+          202
+        ],
+        "request_body": {
+          "name": "Sample upload",
+          "title": "Sample upload",
+          "description": "Sample description",
+          "content": "Sample content"
+        }
       }
     ]
   },
@@ -46,8 +43,8 @@
         "path": "/",
         "expect_status": 200,
         "expect_html_contains": [
-          "<div id=\"root\"",
-          "<!DOCTYPE"
+          "<html",
+          "</html"
         ]
       }
     ]

@@ -1,238 +1,225 @@
-FILE: backend/main.py
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-import sqlite3
-from pydantic import BaseModel
-
-app = FastAPI()
-
-# Enable CORS for React frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# SQLite database setup
-conn = sqlite3.connect('todos.db', check_same_thread=False)
-cursor = conn.cursor()
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS todos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    completed BOOLEAN DEFAULT FALSE
-)
-''')
-conn.commit()
-
-class Todo(BaseModel):
-    title: str
-    completed: bool
-
-class TodoIn(Todo):
-    pass
-
-class TodoOut(Todo):
-    id: int
-
-@app.get("/todos", response_model=list[TodoOut])
-def read_todos():
-    cursor.execute("SELECT * FROM todos")
-    rows = cursor.fetchall()
-    return [{"id": row[0], "title": row[1], "completed": bool(row[2])} for row in rows]
-
-@app.post("/todos", response_model=TodoOut)
-def create_todo(todo: TodoIn):
-    cursor.execute("INSERT INTO todos (title, completed) VALUES (?, ?)", (todo.title, todo.completed))
-    conn.commit()
-    return {"id": cursor.lastrowid, "title": todo.title, "completed": todo.completed}
-
-@app.put("/todos/{todo_id}", response_model=TodoOut)
-def update_todo(todo_id: int, todo: Todo):
-    cursor.execute("UPDATE todos SET title = ?, completed = ? WHERE id = ?", (todo.title, todo.completed, todo_id))
-    conn.commit()
-    if cursor.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Todo not found")
-    return {"id": todo_id, "title": todo.title, "completed": todo.completed}
-
-@app.delete("/todos/{todo_id}", response_model=dict)
-def delete_todo(todo_id: int):
-    cursor.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
-    conn.commit()
-    if cursor.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Todo not found")
-    return {"message": "Todo deleted"}
-
-FILE: backend/requirements.txt
-fastapi
-uvicorn[standard]
-pydantic
-
 FILE: frontend/package.json
 {
-  "name": "todo-app",
+  "name": "audio-workstation",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.html",
+  "description": "A sleek dark-mode audio workstation using React, Web Audio API, and FastAPI.",
+  "main": "src/index.js",
   "scripts": {
-    "dev": "vite"
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
   },
-  "dependencies": {},
-  "devDependencies": {
-    "@vitejs/plugin-react": "^3.1.0",
+  "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "typescript": "^4.9.5",
-    "vite": "^4.3.9"
+    "tailwindcss": "^3.3.2",
+    "html5-canvas": "^1.0.0"
+  },
+  "devDependencies": {
+    "react-scripts": "5.0.1"
   }
 }
 
-FILE: frontend/index.html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Todo App</title>
-</head>
-<body>
-  <div id="root"></div>
-  <script type="module" src="/src/main.tsx"></script>
-</body>
-</html>
+FILE: frontend/src/index.js
+import React from 'react';
+import ReactDOM from 'react-dom';
+import './index.css';
+import App from './App';
 
-FILE: frontend/vite.config.ts
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    proxy: {
-      '/api': {
-        target: 'http://localhost:8000',
-        rewrite: (path) => path.replace(/^\/api/, '')
-      }
-    }
-  }
-})
-
-FILE: frontend/src/main.tsx
-import React from 'react'
-import ReactDOM from 'react-dom/client'
-import App from './App'
-
-ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
+ReactDOM.render(
   <React.StrictMode>
     <App />
-  </React.StrictMode>
-)
+  </React.StrictMode>,
+  document.getElementById('root')
+);
 
-FILE: frontend/src/App.tsx
-import React, { useEffect, useState } from 'react';
+FILE: frontend/src/App.js
+import React, { useRef, useState } from 'react';
+import axios from 'axios';
+import './App.css';
 
-interface Todo {
-  id: number;
-  title: string;
-  completed: boolean;
-}
-
-const App = () => {
-  const [todos, setTodos] = useState<Todo[]>([]);
-  const [newTodoTitle, setNewTodoTitle] = useState('');
+function App() {
+  const [file, setFile] = useState(null);
+  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  const sourceNodeRef = useRef(null);
+  const filterNodeRef = useRef(audioContext.createBiquadFilter());
+  const gainNodeRef = useRef(audioContext.createGain());
 
   useEffect(() => {
-    fetch('/api/todos')
-      .then(response => response.json())
-      .then(data => setTodos(data));
+    filterNodeRef.current.type = 'lowpass';
+    filterNodeRef.current.frequency.setValueAtTime(1000, audioContext.currentTime);
+
+    gainNodeRef.current.gain.setValueAtTime(1, audioContext.currentTime);
+
+    filterNodeRef.current.connect(gainNodeRef.current);
+    gainNodeRef.current.connect(audioContext.destination);
   }, []);
 
-  const addTodo = async () => {
-    if (newTodoTitle.trim()) {
-      const response = await fetch('/api/todos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: newTodoTitle, completed: false })
+  const handleFileChange = (event) => {
+    setFile(event.target.files[0]);
+  };
+
+  const handlePlay = async () => {
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const response = await axios.post('/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
       });
-      const todo = await response.json();
-      setTodos([...todos, todo]);
-      setNewTodoTitle('');
+
+      const audioBuffer = await fetch(response.data.url)
+        .then(res => res.arrayBuffer())
+        .then(arrayBuffer => audioContext.decodeAudioData(arrayBuffer));
+
+      sourceNodeRef.current?.disconnect();
+      sourceNodeRef.current = audioContext.createBufferSource();
+      sourceNodeRef.current.buffer = audioBuffer;
+      sourceNodeRef.current.connect(filterNodeRef.current);
+      sourceNodeRef.current.playbackRate.setValueAtTime(1, audioContext.currentTime);
+      sourceNodeRef.current.start();
+    } catch (error) {
+      console.error('Error uploading file:', error);
     }
   };
 
-  const deleteTodo = async (id: number) => {
-    await fetch(`/api/todos/${id}`, { method: 'DELETE' });
-    setTodos(todos.filter(todo => todo.id !== id));
+  const handleStop = () => {
+    sourceNodeRef.current?.stop();
+  };
+
+  const handleVolumeChange = (event) => {
+    gainNodeRef.current.gain.setValueAtTime(event.target.value, audioContext.currentTime);
+  };
+
+  const handlePlaybackRateChange = (event) => {
+    sourceNodeRef.current.playbackRate.setValueAtTime(event.target.value, audioContext.currentTime);
+  };
+
+  const handleFilterFrequencyChange = (event) => {
+    filterNodeRef.current.frequency.setValueAtTime(event.target.value, audioContext.currentTime);
   };
 
   return (
-    <div>
-      <h1>Todo App</h1>
-      <input
-        type="text"
-        value={newTodoTitle}
-        onChange={(e) => setNewTodoTitle(e.target.value)}
-        placeholder="Add a new todo"
-      />
-      <button onClick={addTodo}>Add</button>
-      <ul>
-        {todos.map(todo => (
-          <li key={todo.id}>
-            {todo.title} - {todo.completed ? 'Completed' : 'Pending'}
-            <button onClick={() => deleteTodo(todo.id)}>Delete</button>
-          </li>
-        ))}
-      </ul>
+    <div className="App bg-gray-900 text-white min-h-screen flex items-center justify-center">
+      <div className="p-8 rounded-lg shadow-lg bg-gray-800 w-full max-w-3xl">
+        <h1 className="text-2xl font-bold mb-4">Audio Workstation</h1>
+        <input type="file" accept=".mp3" onChange={handleFileChange} className="mb-4"/>
+        <button onClick={handlePlay} className="bg-blue-500 text-white px-4 py-2 rounded mr-2">Play</button>
+        <button onClick={handleStop} className="bg-red-500 text-white px-4 py-2 rounded">Stop</button>
+        <div className="mt-4">
+          <label>Volume:</label>
+          <input type="range" min="0" max="1" step="0.01" defaultValue="1" onChange={handleVolumeChange} className="w-full"/>
+        </div>
+        <div className="mt-4">
+          <label>Playback Rate:</label>
+          <input type="range" min="0.5" max="2" step="0.01" defaultValue="1" onChange={handlePlaybackRateChange} className="w-full"/>
+        </div>
+        <div className="mt-4">
+          <label>Filter Frequency (Hz):</label>
+          <input type="range" min="100" max="20000" step="100" defaultValue="1000" onChange={handleFilterFrequencyChange} className="w-full"/>
+        </div>
+      </div>
     </div>
   );
-};
+}
 
 export default App;
 
-FILE: README.md
-# Todo App
+FILE: frontend/src/index.css
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-A simple Todo application built with React and FastAPI.
+FILE: backend/requirements.txt
+fastapi==0.95.1
+uvicorn==0.20.0
 
-## Backend (FastAPI)
+FILE: backend/main.py
+from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import JSONResponse
+import os
+from uuid import uuid4
 
-### Setup
+app = FastAPI()
 
-1. Navigate to the `backend` directory.
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Run the server:
-   ```bash
-   uvicorn main:app --reload
-   ```
+@app.get("/")
+async def read_root():
+    return {"message": "Welcome to the Audio Workstation API"}
 
-The backend will be available at `http://localhost:8000`.
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
 
-## Frontend (React)
+@app.post("/upload/")
+async def upload_file(file: UploadFile = File(...)):
+    file_location = f"uploads/{uuid4()}-{file.filename}"
+    with open(file_location, "wb+") as file_object:
+        file_object.write(file.file.read())
+    return JSONResponse(content={"url": file_location})
 
-### Setup
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 
-1. Navigate to the `frontend` directory.
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Run the development server:
-   ```bash
-   npm run dev
-   ```
+FILE: backend/uploads/__init__.py
 
-The frontend will be available at `http://localhost:5173`.
+FILE: scripts/manage_services.sh
+#!/bin/bash
 
-## Endpoints
+case "$1" in
+  start)
+    ./start.sh
+    ;;
+  stop)
+    ./stop.sh
+    ;;
+  restart)
+    ./restart.sh
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+    ;;
+esac
 
-- **GET** `/todos`: Retrieve all todos.
-- **POST** `/todos`: Create a new todo.
-- **PUT** `/todos/{todo_id}`: Update an existing todo.
-- **DELETE** `/todos/{todo_id}`: Delete a todo.
+exit 0
 
-The API documentation is available at `http://localhost:8000/docs`.
+FILE: scripts/start.sh
+#!/bin/bash
+
+echo "Starting backend..."
+uvicorn backend.main:app --host 0.0.0.0 --port 8000 &
+BACKEND_PID=$!
+
+cd frontend && npm install && npm start &> /dev/null &
+FRONTEND_PID=$!
+
+echo "Backend running with PID $BACKEND_PID"
+echo "Frontend running with PID $FRONTEND_PID"
+
+FILE: scripts/stop.sh
+#!/bin/bash
+
+echo "Stopping services..."
+
+pkill -f uvicorn
+pkill -f npm
+
+echo "Services stopped."
+
+FILE: scripts/restart.sh
+#!/bin/bash
+
+./stop.sh
+sleep 2
+./start.sh
+
+chmod +x scripts/manage_services.sh
+chmod +x scripts/start.sh
+chmod +x scripts/stop.sh
+chmod +x scripts/restart.sh
