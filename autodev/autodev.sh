@@ -461,8 +461,9 @@ while IFS= read -r pkg_file; do
 done < <(find "$PROJECT_ROOT" -name "package.json" -not -path "*/node_modules/*")
 
 if [[ "$LAST_PHASE" -ge 4 && $NEEDS_INSTALL -eq 0 ]]; then
-    skip_phase 4 "Install"
-else
+    echo "  (re-running verification even though dependencies appear present)"
+fi
+{
     > "$SETUP_LOG"
     PHASE4_LOG="$PROJECT_ROOT/phase4_dependency_check.log"
     > "$PHASE4_LOG"
@@ -512,7 +513,13 @@ PYV
     while IFS= read -r pkg_file; do
         dir=$(dirname "$pkg_file")
         echo "[Node] target=$dir" | tee -a "$PHASE4_LOG"
-        npm install --prefix "$dir" --include=dev >> "$SETUP_LOG" 2>&1 || true
+        if (cd "$dir" && npm install --include=dev) >> "$SETUP_LOG" 2>&1; then
+            echo "[Node] npm install ok: $dir" >> "$PHASE4_LOG"
+        else
+            echo "[Node] npm install failed: $dir -> attempting self-heal for invalid deps" >> "$PHASE4_LOG"
+            python3 "$SCRIPTS_DIR/fix_node_deps.py" "$dir" >> "$SETUP_LOG" 2>&1 || true
+            (cd "$dir" && npm install --include=dev) >> "$SETUP_LOG" 2>&1 || true
+        fi
 
         python3 - "$dir" "$PHASE4_LOG" "$SETUP_LOG" << 'NV'
 import os,sys,json,subprocess
@@ -585,7 +592,7 @@ NV
     lesson_record 4 "Installing & Verifying Dependencies" "ok" "Dependency installation and verification logs generated (phase4_dependency_check.log)."
     lesson_record_from_file 4 "Installing & Verifying Dependencies" "warn" "$SETUP_LOG" "Dependency/install warnings"
     lesson_record_from_file 4 "Installing & Verifying Dependencies" "warn" "$PHASE4_LOG" "Dependency verification findings"
-fi
+}
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════════
