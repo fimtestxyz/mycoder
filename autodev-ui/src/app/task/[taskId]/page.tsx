@@ -20,21 +20,35 @@ type Task = {
   lastSummary: string;
 };
 
+const AUTO_SCROLL_KEY = "autodev.task.logs.autoscroll.v1";
+
 export default function TaskPage() {
   const { taskId } = useParams<{ taskId: string }>();
   const [task, setTask] = useState<Task | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  const [lessons, setLessons] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const logContainerRef = useRef<HTMLDivElement | null>(null);
 
+  useEffect(() => {
+    const saved = localStorage.getItem(AUTO_SCROLL_KEY);
+    if (saved === "off") setAutoScroll(false);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(AUTO_SCROLL_KEY, autoScroll ? "on" : "off");
+  }, [autoScroll]);
+
   const load = useCallback(async () => {
     if (!taskId) return;
-    const res = await fetch(`/api/autodev?taskId=${taskId}&lines=400`, { cache: "no-store" });
+    const safeTaskId = String(taskId).replace(/[{}]/g, "").trim();
+    const res = await fetch(`/api/autodev?taskId=${encodeURIComponent(safeTaskId)}&lines=400`, { cache: "no-store" });
     const data = await res.json();
     setTask(data.selectedTask ?? null);
     setLogs(data.logs ?? []);
+    setLessons(data.lessons ?? []);
   }, [taskId]);
 
   useEffect(() => {
@@ -49,6 +63,8 @@ export default function TaskPage() {
     el.scrollTop = el.scrollHeight;
   }, [logs, autoScroll]);
 
+  const effectiveTaskId = task?.taskId ?? String(taskId).replace(/[{}]/g, "").trim();
+
   const action = async (type: "stop" | "resume" | "cancel") => {
     setBusy(true);
     setError("");
@@ -56,7 +72,7 @@ export default function TaskPage() {
       const res = await fetch("/api/autodev", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: type, taskId }),
+        body: JSON.stringify({ action: type, taskId: effectiveTaskId }),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Action failed");
@@ -97,7 +113,7 @@ export default function TaskPage() {
 
         <Card className="rounded-3xl border-zinc-200 bg-white shadow-sm">
           <CardHeader>
-            <CardTitle>Task {taskId}</CardTitle>
+            <CardTitle>Task {effectiveTaskId}</CardTitle>
             <CardDescription>{task?.goal ?? "Loading..."}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -135,6 +151,26 @@ export default function TaskPage() {
               </Button>
             </div>
             {error && <p className="text-sm text-rose-500">{error}</p>}
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-3xl border-zinc-200 bg-white shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-base">Lessons Reminder</CardTitle>
+            <CardDescription className="text-xs">Pulled from autodev lessons for current phase.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {lessons.length === 0 ? (
+              <p className="text-sm text-zinc-500">No lessons yet for this phase.</p>
+            ) : (
+              <ul className="space-y-1 text-sm text-zinc-700">
+                {lessons.map((item, i) => (
+                  <li key={`${i}-${item.slice(0, 20)}`} className="rounded-lg bg-zinc-50 px-2 py-1">
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            )}
           </CardContent>
         </Card>
 

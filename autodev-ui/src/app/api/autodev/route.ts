@@ -8,21 +8,30 @@ import {
   startTask,
   stopTask,
 } from "@/lib/autodev";
+import { readPhaseLessons } from "@/lib/lessons";
 
 export async function GET(request: NextRequest) {
   const lines = Number(request.nextUrl.searchParams.get("lines") ?? 200);
-  const taskId = request.nextUrl.searchParams.get("taskId");
+  const rawTaskId = request.nextUrl.searchParams.get("taskId");
 
   const tasks = listTasks();
-  const selectedTaskId = taskId ?? tasks[0]?.taskId;
-  const selectedTask = selectedTaskId ? getTask(selectedTaskId) : null;
+  const normalizedTaskId = rawTaskId?.replace(/[{}]/g, "").trim();
+
+  let selectedTask = normalizedTaskId ? getTask(normalizedTaskId) : null;
+  if (!selectedTask && tasks.length > 0) {
+    selectedTask = getTask(tasks[0].taskId);
+  }
+
+  const selectedTaskId = selectedTask?.taskId ?? null;
   const logs = selectedTaskId ? readTaskLogs(selectedTaskId, Math.min(1200, Math.max(50, lines))) : [];
+  const lessons = selectedTask ? readPhaseLessons(selectedTask.currentPhase, 4) : [];
 
   return NextResponse.json({
     tasks,
     selectedTask,
     logs,
-    selectedTaskId: selectedTaskId ?? null,
+    selectedTaskId,
+    lessons,
   });
 }
 
