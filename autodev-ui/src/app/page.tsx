@@ -2,9 +2,8 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { ChevronLeft, ChevronRight, Plus, Settings2, Star } from "lucide-react";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -29,6 +28,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [collapsed, setCollapsed] = useState(false);
   const [pinned, setPinned] = useState<string[]>([]);
+  const [hoveredTask, setHoveredTask] = useState<Task | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/autodev", { cache: "no-store" });
@@ -115,12 +115,19 @@ export default function Home() {
                 : "bg-zinc-400";
 
     return (
-      <motion.div layout whileHover={{ y: -2 }} transition={{ duration: 0.15 }} className="group relative">
+      <motion.div
+        layout
+        whileHover={{ y: -2 }}
+        transition={{ duration: 0.15 }}
+        className="group relative"
+        onMouseEnter={() => setHoveredTask(task)}
+        onMouseLeave={() => setHoveredTask((prev) => (prev?.taskId === task.taskId ? null : prev))}
+      >
         <Link
           href={`/task/${task.taskId}`}
           key={task.taskId}
           className={`block rounded-2xl border px-3 py-2 hover:border-zinc-400 ${
-            isCanceled ? "border-zinc-200 bg-zinc-50/70 opacity-60" : "border-zinc-200"
+            isCanceled ? "border-zinc-200 bg-zinc-50/70 opacity-45 grayscale-[0.35]" : "border-zinc-200"
           }`}
         >
           <div className="flex items-center justify-between gap-2">
@@ -148,7 +155,7 @@ export default function Home() {
         </Link>
 
         <div className="pointer-events-none absolute left-0 right-0 -bottom-8 hidden overflow-hidden rounded-md border border-zinc-200 bg-background/95 px-2 py-1 group-hover:block">
-          <p className="inline-block whitespace-nowrap text-[11px] text-zinc-600 animate-[marquee_8s_linear_infinite]">
+          <p className="inline-block whitespace-nowrap text-[11px] text-zinc-600 animate-[marquee_16s_linear_infinite]">
             {task.goal} • {task.goal} • {task.goal}
           </p>
         </div>
@@ -212,9 +219,6 @@ export default function Home() {
         </motion.aside>
 
         <section className="flex-1 space-y-4">
-          <div className="flex items-center justify-end">
-            <ThemeToggle />
-          </div>
           <Card className="rounded-3xl border-zinc-200 bg-card shadow-sm">
             <CardHeader>
               <CardTitle>AutoDev Tasks</CardTitle>
@@ -231,6 +235,29 @@ export default function Home() {
           </Card>
         </section>
       </div>
+
+      <AnimatePresence>
+        {hoveredTask && (
+          <motion.div
+            className="pointer-events-none fixed inset-0 z-30 flex items-center justify-center"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div
+              initial={{ scale: 0.96, y: 12, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.98, y: 8, opacity: 0 }}
+              transition={{ duration: 0.16 }}
+              className="w-[min(92vw,560px)] rounded-2xl border border-border bg-card/95 p-4 shadow-2xl backdrop-blur"
+            >
+              <p className="text-xs text-muted-foreground">Preview • {hoveredTask.taskId}</p>
+              <p className="mt-1 text-sm font-medium capitalize">{hoveredTask.status}</p>
+              <p className="mt-2 text-sm text-foreground">{hoveredTask.goal}</p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </main>
   );
 }

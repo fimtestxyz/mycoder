@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { TopNavbar } from "@/components/top-navbar";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,6 +31,7 @@ export default function RootLayout({
             __html: `(() => { try { const t = localStorage.getItem('autodev.theme.v1') || 'light'; document.documentElement.setAttribute('data-theme', t); } catch(e) {} })();`,
           }}
         />
+        <TopNavbar />
         {children}
       </body>
     </html>
