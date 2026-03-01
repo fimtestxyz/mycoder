@@ -20,5 +20,6 @@ Rules:
 - Provide backend run scripts compatible with scripts/manage_services.sh.
 - Include local dev CORS policy for frontend integration.
 - Add input validation + error handling.
+- Explicitly list all required backend libraries in requirements.txt or pyproject.toml based on actual imports used.
 - Do NOT wrap content in markdown fences.
 - Paths must be relative.

@@ -29,7 +29,10 @@ RULES
 6) Infer entity names, API paths, component names, forms, and validation from TASK + PLAN.
 7) Frontend must call backend endpoints defined by contract and render meaningful UI for the requested domain.
 8) Backend must include validation, error handling, and CORS for local frontend dev.
-9) Scaffolding policy:
+9) You MUST explicitly determine and include required installable libraries for BOTH frontend and backend.
+   - Frontend: ensure package.json dependencies/devDependencies include all imports used in code.
+   - Backend: ensure requirements.txt or pyproject.toml includes all Python imports used in app code.
+10) Scaffolding policy:
    - For Next.js frontend, scaffold structure consistent with `npx create-next-app` conventions.
    - For NestJS backend, scaffold structure consistent with `npx @nestjs/cli` conventions.
    - For Python backend, use uv workflow conventions (`uv init`, `uv sync`) and include pyproject.toml/uv.lock when relevant.

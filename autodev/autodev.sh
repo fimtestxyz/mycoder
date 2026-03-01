@@ -244,6 +244,51 @@ kick_lessons_analysis() {
       > "$LOGS_DIR/lessons_analyzer.log" 2>&1 &
 }
 
+auto_install_missing_libs() {
+    # auto_install_missing_libs <project_root> <setup_log>
+    local root="$1" log_file="$2"
+    python3 - "$root" "$log_file" << 'AUTO_LIB_PY'
+import os,re,sys,subprocess,json
+root,logf=sys.argv[1],sys.argv[2]
+texts=[]
+for name in ["backend.log","frontend.log","preflight_errors.log","uat_report.json"]:
+    p=os.path.join(root,name)
+    if os.path.exists(p):
+        try:texts.append(open(p,encoding='utf-8',errors='ignore').read())
+        except:pass
+blob="\n".join(texts)
+
+py_missing=set(re.findall(r"No module named ['\"]?([a-zA-Z0-9_\.\-]+)", blob))
+js_missing=set(re.findall(r"Cannot find module ['\"]([^'\"]+)['\"]", blob))
+js_missing.update(re.findall(r"Failed to resolve import ['\"]([^'\"]+)['\"]", blob))
+
+# Python install
+for d,_,files in os.walk(root):
+    if 'venv' in d or '.venv' in d or 'node_modules' in d: continue
+    if 'requirements.txt' in files or 'pyproject.toml' in files:
+        venv = os.path.join(d,'.venv') if os.path.isdir(os.path.join(d,'.venv')) else os.path.join(d,'venv')
+        pip = os.path.join(venv,'bin','pip')
+        if os.path.exists(pip) and py_missing:
+            pkgs=sorted({m.split('.')[0] for m in py_missing if m not in {'app','main'}})
+            if pkgs:
+                with open(logf,'a') as lf:
+                    lf.write(f"\n[AUTO_LIB] python install in {d}: {pkgs}\n")
+                    subprocess.run([pip,'install']+pkgs,cwd=d,stdout=lf,stderr=lf)
+
+# Node install
+for d,_,files in os.walk(root):
+    if 'node_modules' in d: continue
+    if 'package.json' in files:
+        if js_missing:
+            # ignore relative imports
+            pkgs=sorted({m for m in js_missing if not m.startswith('.') and not m.startswith('/')})
+            if pkgs:
+                with open(logf,'a') as lf:
+                    lf.write(f"\n[AUTO_LIB] npm install in {d}: {pkgs}\n")
+                    subprocess.run(['npm','install']+pkgs,cwd=d,stdout=lf,stderr=lf)
+AUTO_LIB_PY
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # HEADER
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -489,6 +534,9 @@ with open(log,'a') as f:
 NV
 
     done < <(find "$PROJECT_ROOT" -name "package.json" -not -path "*/node_modules/*" -not -path "*/.next/*")
+
+    # One pass auto-install based on detected missing imports/modules
+    auto_install_missing_libs "$PROJECT_ROOT" "$SETUP_LOG"
 
     echo "  [Phase4] Verification snapshot:"
     tail -n 20 "$PHASE4_LOG" | sed 's/^/    /'
@@ -825,7 +873,10 @@ FIX_PY
             done
         fi
 
-        # ── Step D: re-run preflight to catch any new syntax errors ──────────
+        # ── Step D: auto-install missing libraries + preflight ───────────────
+        echo "  [Debug $DEBUG_ITER/D] Auto-install missing libraries (js/python) if detected..."
+        auto_install_missing_libs "$PROJECT_ROOT" "$SETUP_LOG"
+
         echo "  [Debug $DEBUG_ITER/D] Quick pre-flight check..."
         if ! python3 "$SCRIPTS_DIR/preflight.py" "$PROJECT_ROOT" 2>/dev/null; then
             echo "  [Debug $DEBUG_ITER] Pre-flight still failing — restart may not help"
