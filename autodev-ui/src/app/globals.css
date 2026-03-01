@@ -161,3 +161,8 @@ html[data-theme="vscode-dark"] {
   --border: #3c3c3c;
   --input: #3c3c3c;
 }
+
+@keyframes marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}

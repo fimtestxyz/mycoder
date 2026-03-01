@@ -100,6 +100,7 @@ export default function Home() {
 
   const TaskRow = ({ task }: { task: Task }) => {
     const isPinned = pinned.includes(task.taskId);
+    const isCanceled = task.status === "canceled";
     const statusColor =
       task.status === "running"
         ? "bg-emerald-500"
@@ -114,11 +115,13 @@ export default function Home() {
                 : "bg-zinc-400";
 
     return (
-      <motion.div layout whileHover={{ y: -2 }} transition={{ duration: 0.15 }}>
+      <motion.div layout whileHover={{ y: -2 }} transition={{ duration: 0.15 }} className="group relative">
         <Link
           href={`/task/${task.taskId}`}
           key={task.taskId}
-          className="block rounded-2xl border border-zinc-200 px-3 py-2 hover:border-zinc-400"
+          className={`block rounded-2xl border px-3 py-2 hover:border-zinc-400 ${
+            isCanceled ? "border-zinc-200 bg-zinc-50/70 opacity-60" : "border-zinc-200"
+          }`}
         >
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
@@ -143,6 +146,12 @@ export default function Home() {
           </div>
           <p className="mt-1 line-clamp-2 text-sm">{task.goal}</p>
         </Link>
+
+        <div className="pointer-events-none absolute left-0 right-0 -bottom-8 hidden overflow-hidden rounded-md border border-zinc-200 bg-background/95 px-2 py-1 group-hover:block">
+          <p className="inline-block whitespace-nowrap text-[11px] text-zinc-600 animate-[marquee_8s_linear_infinite]">
+            {task.goal} • {task.goal} • {task.goal}
+          </p>
+        </div>
       </motion.div>
     );
   };
