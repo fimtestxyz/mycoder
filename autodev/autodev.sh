@@ -209,12 +209,26 @@ phase_reminder() {
     # phase_reminder <phase_num> <phase_name>
     local phase="$1" name="$2"
     local reminder
+
+    # Apply latest versioned playbook snippets first (if available)
+    if [[ -f "$LESSONS_DIR/latest.md" ]]; then
+        echo "  📘 Latest Lessons Playbook (applied):"
+        awk 'NR<=16 {print}' "$LESSONS_DIR/latest.md" | sed 's/^/     /'
+        echo ""
+    fi
+
     reminder=$(python3 "$SCRIPTS_DIR/lessons.py" remind "$LESSONS_DIR" "$phase" "$name" "$TASK" "$PLANNER_MODEL" "$OLLAMA_API" 2>/dev/null || true)
     if [[ -n "$reminder" ]]; then
         echo "  🧠 Lessons reminder for Phase $phase ($name):"
         echo "$reminder" | sed 's/^/     /'
         echo ""
     fi
+}
+
+kick_lessons_analysis() {
+    # Non-blocking analysis when runtime is idle enough; lock handled by analyzer.
+    nohup python3 "$SCRIPTS_DIR/lessons_analyzer.py" "$LESSONS_DIR" "$PLANNER_MODEL" "$OLLAMA_API" \
+      > "$LOGS_DIR/lessons_analyzer.log" 2>&1 &
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -233,6 +247,9 @@ if [[ $RESUME_MODE -eq 1 ]]; then
     echo "     Skipping completed phases, continuing from phase $((LAST_PHASE + 1))"
 fi
 echo ""
+
+# Start asynchronous lesson analysis (versioned playbook refresh)
+kick_lessons_analysis
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PHASE 1: PLAN
@@ -901,4 +918,8 @@ if [[ $UAT_PASSED -eq 0 ]]; then
         "$UAT_REPORT" 2>/dev/null || true
 fi
 echo ""
+
+# Refresh versioned lessons after this run's outcomes
+kick_lessons_analysis
+
 [[ $UAT_PASSED -eq 1 ]] && exit 0 || exit 1
