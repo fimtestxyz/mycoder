@@ -8,7 +8,6 @@ import {
   startTask,
   stopTask,
 } from "@/lib/autodev";
-import { getOllamaModelLogs, getOllamaOverview, readAgentConfig, updateAgentConfig } from "@/lib/ollama";
 
 export async function GET(request: NextRequest) {
   const lines = Number(request.nextUrl.searchParams.get("lines") ?? 200);
@@ -19,32 +18,20 @@ export async function GET(request: NextRequest) {
   const selectedTask = selectedTaskId ? getTask(selectedTaskId) : null;
   const logs = selectedTaskId ? readTaskLogs(selectedTaskId, Math.min(1200, Math.max(50, lines))) : [];
 
-  const [ollama, config] = await Promise.all([getOllamaOverview(), Promise.resolve(readAgentConfig())]);
-  const modelLogs = getOllamaModelLogs(140);
-
   return NextResponse.json({
     tasks,
     selectedTask,
     logs,
     selectedTaskId: selectedTaskId ?? null,
-    ollama,
-    config,
-    modelLogs,
   });
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as {
-      action?: "start" | "stop" | "resume" | "cancel" | "updateConfig";
+      action?: "start" | "stop" | "resume" | "cancel";
       goal?: string;
       taskId?: string;
-      config?: {
-        planner_model?: string;
-        coder_model?: string;
-        repair_model?: string;
-        repair_model_fallback?: string;
-      };
     };
 
     const { action, goal, taskId } = body;
@@ -52,11 +39,6 @@ export async function POST(request: NextRequest) {
     if (action === "start") {
       const task = startTask(goal ?? "");
       return NextResponse.json({ ok: true, task });
-    }
-
-    if (action === "updateConfig") {
-      const config = updateAgentConfig(body.config ?? {});
-      return NextResponse.json({ ok: true, config });
     }
 
     if (!taskId) {
