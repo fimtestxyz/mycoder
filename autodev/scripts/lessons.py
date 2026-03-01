@@ -92,33 +92,21 @@ def fallback_bullets(items, phase_name):
 
 def remind(lessons_dir: str, phase_num: str, phase_name: str, task: str, model: str, ollama_api: str):
     jsonl_path, _ = phase_paths(lessons_dir, phase_num)
-    items = read_recent(jsonl_path, limit=12)
+    items = read_recent(jsonl_path, limit=14)
     if not items:
         print(f"No prior lessons for Phase {phase_num} ({phase_name}).")
         return
 
-    short = "\n".join(
-        [f"- [{x.get('status','?')}] {x.get('summary','')[:220]}" for x in items[-8:]]
-    )
+    # Prefer extractive reminders from actual failures/warnings to avoid generic hallucinated advice
+    concrete = [x for x in items if x.get("status") in ("failed", "error", "warn") and x.get("summary")]
+    if concrete:
+        bullets = [f"- {str(x.get('summary'))[:220]}" for x in concrete[-5:]]
+        print("\n".join(bullets))
+        return
 
-    prompt = f"""You are a strict engineering reviewer.
-Task: {task}
-Current phase: {phase_num} - {phase_name}
-Recent lessons:
-{short}
-
-Return concise execution reminders to avoid repeating mistakes.
-Output 4-6 bullet points only. No intro.
-"""
-
-    try:
-        text = ollama_generate(model, prompt, ollama_api)
-        # normalize if model adds noise
-        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-        lines = [ln if ln.startswith("-") else f"- {re.sub(r'^\d+[\.)]\s*', '', ln)}" for ln in lines][:6]
-        print("\n".join(lines) if lines else fallback_bullets(items, phase_name))
-    except Exception:
-        print(fallback_bullets(items, phase_name))
+    # If only success lessons exist, keep concise and factual
+    ok_items = [x for x in items if x.get("summary")]
+    print("\n".join([f"- {str(x.get('summary'))[:200]}" for x in ok_items[-4:]]))
 
 
 if __name__ == "__main__":

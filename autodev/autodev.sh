@@ -584,7 +584,10 @@ if [[ "$LAST_PHASE" -ge 6 ]]; then
 fi
 
 if [[ $SERVICES_RUNNING -eq 0 ]]; then
-    pm start "$PROJECT_ROOT" "$BACKEND_PORT" "$FRONTEND_PORT"
+    if ! pm start "$PROJECT_ROOT" "$BACKEND_PORT" "$FRONTEND_PORT"; then
+        echo "  [PM] startup command discovery failed for one or more services"
+        lesson_record 6 "Launching Services" "failed" "process_manager could not discover valid startup commands for backend/frontend"
+    fi
 fi
 
 echo "  Waiting for services to be ready..."
