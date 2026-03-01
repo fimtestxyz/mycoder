@@ -194,6 +194,17 @@ lesson_record() {
     python3 "$SCRIPTS_DIR/lessons.py" record "$LESSONS_DIR" "$phase" "$name" "$status" "$summary" >/dev/null 2>&1 || true
 }
 
+lesson_record_from_file() {
+    # lesson_record_from_file <phase_num> <phase_name> <status> <file> <label>
+    local phase="$1" name="$2" status="$3" file="$4" label="$5"
+    [[ ! -f "$file" ]] && return 0
+    local extracted
+    extracted=$(grep -E -i "error|failed|warning|exception|traceback|❌|missing script" "$file" | tail -6 | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g' | cut -c1-380)
+    if [[ -n "$extracted" ]]; then
+        lesson_record "$phase" "$name" "$status" "$label :: $extracted"
+    fi
+}
+
 phase_reminder() {
     # phase_reminder <phase_num> <phase_name>
     local phase="$1" name="$2"
@@ -250,6 +261,7 @@ else
 "modules":[{"name":"Frontend","technologies":["React","Vite"]},{"name":"Backend","technologies":["FastAPI","SQLite"]}],
 "folder_structure":["frontend/","backend/"],"dependencies":["react","fastapi","uvicorn","sqlalchemy"]}
 FB
+        lesson_record 1 "Architecture Planning" "warn" "Planner failed to return valid JSON after retries; fallback plan injected."
     fi
     phase_done 1 '{"status":"ok"}'
     lesson_record 1 "Architecture Planning" "ok" "Plan generated successfully with valid JSON output."
@@ -414,6 +426,7 @@ VERIFY_PY
 
     phase_done 4 '{"status":"ok"}'
     lesson_record 4 "Installing & Verifying Dependencies" "ok" "Dependency installation completed (including verification/fixes)."
+    lesson_record_from_file 4 "Installing & Verifying Dependencies" "warn" "$SETUP_LOG" "Dependency/install warnings"
 fi
 echo ""
 
@@ -518,6 +531,8 @@ done
 phase_done 5 "{\"status\":\"ok\",\"preflight_passed\":$PREFLIGHT_PASSED}"
 if [[ $PREFLIGHT_PASSED -eq 1 ]]; then
     lesson_record 5 "Static Pre-flight Checks" "ok" "Preflight passed cleanly before launch."
+else
+    lesson_record_from_file 5 "Static Pre-flight Checks" "failed" "$PROJECT_ROOT/preflight_errors.log" "Preflight errors"
 fi
 echo ""
 
@@ -591,6 +606,8 @@ else
     else
         lesson_record 6 "Launching Services" "failed" "Service health checks timed out (connection refused / startup failure). Inspect backend.log and frontend.log before UAT."
     fi
+    lesson_record_from_file 6 "Launching Services" "failed" "$PROJECT_ROOT/frontend.log" "Frontend startup errors"
+    lesson_record_from_file 6 "Launching Services" "failed" "$PROJECT_ROOT/backend.log" "Backend startup errors"
 fi
 echo ""
 
@@ -616,7 +633,8 @@ if [[ $UAT_PASSED -eq 1 ]]; then
 else
     phase_done 7 '{"status":"failed"}'
     FAIL_CATS=$(jq -r '.failure_categories | join(", ")' "$UAT_REPORT" 2>/dev/null || echo "unknown")
-    lesson_record 7 "Contract-Driven UAT" "failed" "UAT failed with categories: $FAIL_CATS"
+    FAIL_DETAILS=$(jq -r '.failures | map("[" + (.category // "?") + "] " + (.test // "?") + " => " + ((.actual // "")|tostring)) | .[:3] | join(" ; ")' "$UAT_REPORT" 2>/dev/null || echo "")
+    lesson_record 7 "Contract-Driven UAT" "failed" "UAT failed with categories: $FAIL_CATS. Details: $FAIL_DETAILS"
     echo ""
     echo "  ⚠️  UAT failures detected — entering debug loop"
 fi
@@ -794,6 +812,7 @@ f=[x['test'] for x in r.get('failures',[])]
 print(f'Still failing ({len(f)}): {f}')" 2>/dev/null)
             echo "  $REMAINING"
             lesson_record 8 "Targeted Debug Loop" "failed" "Debug iteration $DEBUG_ITER still failing: $REMAINING"
+            lesson_record_from_file 8 "Targeted Debug Loop" "failed" "$REPAIR_CONTEXT" "Debug repair context errors"
             phase_done 8 "{\"status\":\"partial\",\"iterations\":$DEBUG_ITERATIONS}"
         fi
     done

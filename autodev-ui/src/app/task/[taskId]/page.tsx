@@ -15,6 +15,10 @@ type Task = {
   goal: string;
   status: "idle" | "running" | "stopped" | "completed" | "failed" | "canceled";
   pid: number | null;
+  createdAt?: string;
+  updatedAt?: string;
+  startedAt?: string | null;
+  endedAt?: string | null;
   currentPhase: number;
   phaseTitle: string;
   progress: number;
@@ -31,6 +35,8 @@ export default function TaskPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [nowTs, setNowTs] = useState(Date.now());
+  const [copyOk, setCopyOk] = useState(false);
   const logContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -64,7 +70,39 @@ export default function TaskPage() {
     el.scrollTop = el.scrollHeight;
   }, [logs, autoScroll]);
 
+  useEffect(() => {
+    const t = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
   const effectiveTaskId = task?.taskId ?? String(taskId).replace(/[{}]/g, "").trim();
+
+  const formatDuration = (ms: number) => {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    if (h > 0) return `${h}h ${m}m ${s}s`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  };
+
+  const elapsedMs = (() => {
+    if (!task?.startedAt) return null;
+    const start = new Date(task.startedAt).getTime();
+    const end = task.endedAt ? new Date(task.endedAt).getTime() : nowTs;
+    return Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start) : null;
+  })();
+
+  const copyLogs = async () => {
+    try {
+      await navigator.clipboard.writeText(logs.join("\n"));
+      setCopyOk(true);
+      setTimeout(() => setCopyOk(false), 1200);
+    } catch {
+      // ignore
+    }
+  };
 
   const action = async (type: "stop" | "resume" | "cancel") => {
     setBusy(true);
@@ -125,6 +163,15 @@ export default function TaskPage() {
               <Badge className={`${badgeClass} capitalize`}>{task?.status ?? "idle"}</Badge>
               <span className="text-xs text-zinc-500">PID: {task?.pid ?? "-"}</span>
             </div>
+            <div className="grid grid-cols-1 gap-1 text-xs text-zinc-500 md:grid-cols-2">
+              <p>Started: {task?.startedAt ? new Date(task.startedAt).toLocaleString() : "-"}</p>
+              <p>Ended: {task?.endedAt ? new Date(task.endedAt).toLocaleString() : "-"}</p>
+              <p className="md:col-span-2">
+                {task?.status === "completed" || task?.status === "canceled"
+                  ? `Total time taken: ${elapsedMs !== null ? formatDuration(elapsedMs) : "-"}`
+                  : `Time lapse: ${elapsedMs !== null ? formatDuration(elapsedMs) : "-"}`}
+              </p>
+            </div>
             <div>
               <div className="mb-1 flex justify-between text-xs text-zinc-500">
                 <span>Phase {task?.currentPhase ?? 0}/8</span>
@@ -180,7 +227,12 @@ export default function TaskPage() {
 
         <Card className="rounded-3xl border-zinc-200 bg-card shadow-sm">
           <CardHeader>
-            <CardTitle>Task Logs</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle>Task Logs</CardTitle>
+              <Button size="sm" variant="outline" onClick={copyLogs}>
+                {copyOk ? "Copied" : "Copy logs"}
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             <div
