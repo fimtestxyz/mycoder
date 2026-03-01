@@ -2,12 +2,11 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pause, Play, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 
 type Task = {
@@ -52,7 +51,7 @@ export default function TaskPage() {
   const load = useCallback(async () => {
     if (!taskId) return;
     const safeTaskId = String(taskId).replace(/[{}]/g, "").trim();
-    const res = await fetch(`/api/autodev?taskId=${encodeURIComponent(safeTaskId)}&lines=400`, { cache: "no-store" });
+    const res = await fetch(`/api/autodev?taskId=${encodeURIComponent(safeTaskId)}&lines=100000`, { cache: "no-store" });
     const data = await res.json();
     setTask(data.selectedTask ?? null);
     setLogs(data.logs ?? []);
@@ -142,6 +141,17 @@ export default function TaskPage() {
     }
   }, [task?.status]);
 
+  const Section = ({ title, defaultOpen = true, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) => (
+    <details open={defaultOpen} className="group rounded-3xl border border-zinc-200 bg-card shadow-sm">
+      <summary className="cursor-pointer list-none px-5 py-4 text-sm font-medium flex items-center justify-between">
+        <span>{title}</span>
+        <span className="text-xs text-zinc-500 group-open:hidden">Expand</span>
+        <span className="text-xs text-zinc-500 hidden group-open:inline">Collapse</span>
+      </summary>
+      <div className="px-5 pb-5">{children}</div>
+    </details>
+  );
+
   return (
     <main className="min-h-screen bg-background p-3 md:p-6">
       <div className="mx-auto max-w-6xl space-y-4">
@@ -155,12 +165,9 @@ export default function TaskPage() {
           </div>
         </div>
 
-        <Card className="rounded-3xl border-zinc-200 bg-card shadow-sm">
-          <CardHeader>
-            <CardTitle>Task {effectiveTaskId}</CardTitle>
-            <CardDescription>{task?.goal ?? "Loading..."}</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
+        <Section title={`Task ${effectiveTaskId}`}>
+          <div className="mb-3 text-sm text-zinc-600">{task?.goal ?? "Loading..."}</div>
+          <div className="space-y-3">
             <div className="flex items-center justify-between">
               <Badge className={`${badgeClass} capitalize`}>{task?.status ?? "idle"}</Badge>
               <span className="text-xs text-zinc-500">PID: {task?.pid ?? "-"}</span>
@@ -204,67 +211,47 @@ export default function TaskPage() {
               </Button>
             </div>
             {error && <p className="text-sm text-rose-500">{error}</p>}
-          </CardContent>
-        </Card>
+          </div>
+        </Section>
 
-        <Card className="rounded-3xl border-zinc-200 bg-card shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-base">Lessons Reminder</CardTitle>
-            <CardDescription className="text-xs">Pulled from autodev lessons for current phase.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {lessons.length === 0 ? (
-              <p className="text-sm text-zinc-500">No lessons yet for this phase.</p>
-            ) : (
-              <ul className="space-y-1 text-sm text-zinc-700">
-                {lessons.map((item, i) => (
-                  <li key={`${i}-${item.slice(0, 20)}`} className="rounded-lg bg-zinc-50 px-2 py-1">
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+        <Section title="Lessons Reminder" defaultOpen={false}>
+          <p className="mb-2 text-xs text-zinc-500">Pulled from autodev lessons for current phase.</p>
+          {lessons.length === 0 ? (
+            <p className="text-sm text-zinc-500">No lessons yet for this phase.</p>
+          ) : (
+            <ul className="space-y-1 text-sm text-zinc-700">
+              {lessons.map((item, i) => (
+                <li key={`${i}-${item.slice(0, 20)}`} className="rounded-lg bg-zinc-50 px-2 py-1">{item}</li>
+              ))}
+            </ul>
+          )}
+        </Section>
 
-        <Card className="rounded-3xl border-zinc-200 bg-card shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-base">Phase 4 Dependency Verification</CardTitle>
-            <CardDescription className="text-xs">Separate install/verification log for package.json/node_modules and Python .venv checks.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="h-40 overflow-y-auto rounded-xl border border-zinc-200 bg-zinc-50 p-2 font-mono text-[11px]">
-              {phase4Log.length ? phase4Log.map((line, i) => <p key={`${i}-${line.slice(0,20)}`} className="whitespace-pre-wrap break-words text-zinc-700">{line}</p>) : <p className="text-zinc-500">No separate Phase 4 log found yet.</p>}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="rounded-3xl border-zinc-200 bg-card shadow-sm">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Task Logs</CardTitle>
-              <Button size="sm" variant="outline" onClick={copyLogs}>
-                {copyOk ? "Copied" : "Copy logs"}
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div
-              ref={logContainerRef}
-              className="h-[56vh] overflow-y-auto rounded-2xl border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs"
-            >
-              {logs.length === 0 ? (
-                <p className="text-zinc-500">No logs yet.</p>
-              ) : (
-                logs.map((line, idx) => (
-                  <p key={`${idx}-${line.slice(0, 20)}`} className="whitespace-pre-wrap break-words text-zinc-700">
-                    {line}
-                  </p>
+        <Section title="Phase 4 Dependency Verification" defaultOpen={false}>
+          <p className="mb-2 text-xs text-zinc-500">Separate install/verification log for package.json/node_modules and Python .venv checks.</p>
+          <div className="h-40 overflow-y-auto rounded-xl border border-zinc-200 bg-zinc-50 p-2 font-mono text-[11px]">
+            {phase4Log.length
+              ? phase4Log.map((line, i) => (
+                  <p key={`${i}-${line.slice(0, 20)}`} className="whitespace-pre-wrap break-words text-zinc-700">{line}</p>
                 ))
-              )}
-            </div>
-          </CardContent>
-        </Card>
+              : <p className="text-zinc-500">No separate Phase 4 log found yet.</p>}
+          </div>
+        </Section>
+
+        <Section title="Task Logs" defaultOpen>
+          <div className="mb-2 flex items-center justify-end">
+            <Button size="sm" variant="outline" onClick={copyLogs}>{copyOk ? "Copied" : "Copy logs"}</Button>
+          </div>
+          <div ref={logContainerRef} className="h-[70vh] overflow-y-auto rounded-2xl border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs">
+            {logs.length === 0 ? (
+              <p className="text-zinc-500">No logs yet.</p>
+            ) : (
+              logs.map((line, idx) => (
+                <p key={`${idx}-${line.slice(0, 20)}`} className="whitespace-pre-wrap break-words text-zinc-700">{line}</p>
+              ))
+            )}
+          </div>
+        </Section>
       </div>
     </main>
   );
