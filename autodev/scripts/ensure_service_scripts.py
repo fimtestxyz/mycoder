@@ -38,17 +38,31 @@ kill_port() {{
 find_backend_cmd() {{
   for d in backend api server app; do
     if [[ -d "$ROOT/$d" ]]; then
+      mod="main"
+      [[ -f "$ROOT/$d/app.py" ]] && mod="app"
+      [[ -f "$ROOT/$d/server.py" ]] && mod="server"
+
+      if [[ -f "$ROOT/$d/pyproject.toml" ]] && command -v uv >/dev/null 2>&1; then
+        echo "uv run uvicorn $mod:app --reload --port $BE_PORT"
+        return 0
+      fi
+      if [[ -x "$ROOT/$d/.venv/bin/python" ]]; then
+        echo "$ROOT/$d/.venv/bin/python -m uvicorn $mod:app --reload --port $BE_PORT"
+        return 0
+      fi
+      if [[ -x "$ROOT/$d/venv/bin/python" ]]; then
+        echo "$ROOT/$d/venv/bin/python -m uvicorn $mod:app --reload --port $BE_PORT"
+        return 0
+      fi
+      if [[ -x "$ROOT/$d/.venv/bin/uvicorn" ]]; then
+        echo "$ROOT/$d/.venv/bin/uvicorn $mod:app --reload --port $BE_PORT"
+        return 0
+      fi
       if [[ -x "$ROOT/$d/venv/bin/uvicorn" ]]; then
-        mod="main"
-        [[ -f "$ROOT/$d/app.py" ]] && mod="app"
-        [[ -f "$ROOT/$d/server.py" ]] && mod="server"
         echo "$ROOT/$d/venv/bin/uvicorn $mod:app --reload --port $BE_PORT"
         return 0
       fi
       if [[ -f "$ROOT/$d/main.py" || -f "$ROOT/$d/app.py" || -f "$ROOT/$d/server.py" ]]; then
-        mod="main"
-        [[ -f "$ROOT/$d/app.py" ]] && mod="app"
-        [[ -f "$ROOT/$d/server.py" ]] && mod="server"
         echo "python3 -m uvicorn $mod:app --reload --port $BE_PORT"
         return 0
       fi

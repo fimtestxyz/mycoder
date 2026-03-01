@@ -4,7 +4,7 @@ process_manager.py - Reliable service lifecycle: start, stop, check, restart.
 Usage: python3 process_manager.py <command> <project_root> [backend_port] [frontend_port]
 Commands: start | stop | status | restart
 """
-import sys, os, json, signal, time, subprocess
+import sys, os, json, signal, time, subprocess, shutil
 
 
 def get_pid_file(project_root):
@@ -79,24 +79,31 @@ def _frontend_cmd(fe_path):
 
 
 def _backend_cmd(be_path, backend_port):
-    # 1) venv uvicorn path
-    venv_uv = os.path.join(be_path, "venv", "bin", "uvicorn")
-    if os.path.exists(venv_uv):
-        main_mod = "main"
-        for f in ["main.py", "app.py", "server.py"]:
-            if os.path.exists(os.path.join(be_path, f)):
-                main_mod = f.replace(".py", "")
-                break
-        return [venv_uv, f"{main_mod}:app", "--reload", "--port", str(backend_port)]
+    main_mod = "main"
+    for f in ["main.py", "app.py", "server.py"]:
+        if os.path.exists(os.path.join(be_path, f)):
+            main_mod = f.replace(".py", "")
+            break
 
-    # 2) requirements with python -m uvicorn
+    # 1) Use local uv project runner when possible (preferred)
+    if os.path.exists(os.path.join(be_path, "pyproject.toml")):
+        uv_bin = shutil.which("uv")
+        if uv_bin:
+            return [uv_bin, "run", "uvicorn", f"{main_mod}:app", "--reload", "--port", str(backend_port)]
+
+    # 2) Use project's .venv python explicitly
+    for pybin in [os.path.join(be_path, ".venv", "bin", "python"), os.path.join(be_path, "venv", "bin", "python")]:
+        if os.path.exists(pybin):
+            return [pybin, "-m", "uvicorn", f"{main_mod}:app", "--reload", "--port", str(backend_port)]
+
+    # 3) Legacy venv uvicorn path
+    for uv in [os.path.join(be_path, ".venv", "bin", "uvicorn"), os.path.join(be_path, "venv", "bin", "uvicorn")]:
+        if os.path.exists(uv):
+            return [uv, f"{main_mod}:app", "--reload", "--port", str(backend_port)]
+
+    # 4) requirements with system python -m uvicorn (last resort)
     has_py = any(os.path.exists(os.path.join(be_path, x)) for x in ["main.py", "app.py", "server.py"])
     if has_py:
-        main_mod = "main"
-        for f in ["main.py", "app.py", "server.py"]:
-            if os.path.exists(os.path.join(be_path, f)):
-                main_mod = f.replace(".py", "")
-                break
         return ["python3", "-m", "uvicorn", f"{main_mod}:app", "--reload", "--port", str(backend_port)]
 
     # 3) Node backend support

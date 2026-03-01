@@ -279,6 +279,12 @@ for d,_,files in os.walk(root):
 for d,_,files in os.walk(root):
     if 'node_modules' in d: continue
     if 'package.json' in files:
+        nm=os.path.isdir(os.path.join(d,'node_modules'))
+        with open(logf,'a') as lf:
+            if not nm:
+                lf.write(f"\n[AUTO_LIB] node_modules missing in {d}: running npm install --include=dev\n")
+                subprocess.run(['npm','install','--include=dev'],cwd=d,stdout=lf,stderr=lf)
+
         if js_missing:
             # ignore relative imports
             pkgs=sorted({m for m in js_missing if not m.startswith('.') and not m.startswith('/')})
