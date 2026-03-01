@@ -14,7 +14,8 @@ CONFIG_FILE="$SCRIPT_DIR/config/agent.config.json"
 PROMPTS_DIR="$SCRIPT_DIR/prompts"
 SCRIPTS_DIR="$SCRIPT_DIR/scripts"
 LOGS_DIR="$SCRIPT_DIR/logs"
-mkdir -p "$LOGS_DIR"
+LESSONS_DIR="$SCRIPT_DIR/lessons"
+mkdir -p "$LOGS_DIR" "$LESSONS_DIR"
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
 for cmd in curl jq python3; do
@@ -187,6 +188,24 @@ PYEOF
 
 pm() { python3 "$SCRIPTS_DIR/process_manager.py" "$@"; }
 
+lesson_record() {
+    # lesson_record <phase_num> <phase_name> <status> <summary>
+    local phase="$1" name="$2" status="$3" summary="$4"
+    python3 "$SCRIPTS_DIR/lessons.py" record "$LESSONS_DIR" "$phase" "$name" "$status" "$summary" >/dev/null 2>&1 || true
+}
+
+phase_reminder() {
+    # phase_reminder <phase_num> <phase_name>
+    local phase="$1" name="$2"
+    local reminder
+    reminder=$(python3 "$SCRIPTS_DIR/lessons.py" remind "$LESSONS_DIR" "$phase" "$name" "$TASK" "$PLANNER_MODEL" "$OLLAMA_API" 2>/dev/null || true)
+    if [[ -n "$reminder" ]]; then
+        echo "  🧠 Lessons reminder for Phase $phase ($name):"
+        echo "$reminder" | sed 's/^/     /'
+        echo ""
+    fi
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # HEADER
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -210,6 +229,7 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Phase 1: Architecture Planning"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+phase_reminder 1 "Architecture Planning"
 
 if [[ "$LAST_PHASE" -ge 1 && -f "$PLAN_FILE" ]]; then
     skip_phase 1 "Planning"
@@ -232,6 +252,7 @@ else
 FB
     fi
     phase_done 1 '{"status":"ok"}'
+    lesson_record 1 "Architecture Planning" "ok" "Plan generated successfully with valid JSON output."
 fi
 jq . "$PLAN_FILE"
 echo ""
@@ -242,6 +263,7 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Phase 2: Generating Test Contract"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+phase_reminder 2 "Generating Test Contract"
 
 if [[ "$LAST_PHASE" -ge 2 && -f "$CONTRACT_FILE" ]]; then
     skip_phase 2 "Contract"
@@ -255,6 +277,7 @@ else
     echo "  Initial contract: $(jq '.backend.endpoints|length' "$CONTRACT_FILE") API tests (will expand after codegen)"
     echo ""
     phase_done 2 '{"status":"ok"}'
+    lesson_record 2 "Generating Test Contract" "ok" "Contract generated/updated successfully from plan and source."
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -263,6 +286,7 @@ fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Phase 3: Code Generation"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+phase_reminder 3 "Code Generation"
 
 FILES_COUNT=$(find "$PROJECT_ROOT" -type f \
     -not -path "*/node_modules/*" -not -path "*/venv/*" \
@@ -313,6 +337,7 @@ else
         "$PLAN_FILE" "$PROJECT_ROOT" "$BACKEND_PORT" "$FRONTEND_PORT" "$CONTRACT_FILE"
     echo "  Contract updated: $(jq '.backend.endpoints|length' "$CONTRACT_FILE") API tests"
     phase_done 3 "{\"status\":\"ok\",\"files_written\":$FILES_WRITTEN}"
+    lesson_record 3 "Code Generation" "ok" "Code generation produced $FILES_WRITTEN files without write/format failures."
 fi
 echo ""
 
@@ -322,6 +347,7 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Phase 4: Installing & Verifying Dependencies"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+phase_reminder 4 "Installing & Verifying Dependencies"
 
 # Always run install if node_modules or venv is missing, even when resuming
 NEEDS_INSTALL=0
@@ -387,6 +413,7 @@ VERIFY_PY
         -not -path "*/node_modules/*" -not -path "*/.next/*")
 
     phase_done 4 '{"status":"ok"}'
+    lesson_record 4 "Installing & Verifying Dependencies" "ok" "Dependency installation completed (including verification/fixes)."
 fi
 echo ""
 
@@ -396,6 +423,7 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Phase 5: Static Pre-flight Checks"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+phase_reminder 5 "Static Pre-flight Checks"
 
 run_preflight() {
     python3 "$SCRIPTS_DIR/preflight.py" "$PROJECT_ROOT"
@@ -424,6 +452,7 @@ while [[ $PREFLIGHT_ATTEMPTS -lt 2 ]]; do
 
     if [[ $PREFLIGHT_ATTEMPTS -ge 2 ]]; then
         echo "  ⚠️  Pre-flight issues remain after repair — continuing (runtime will confirm)"
+        lesson_record 5 "Static Pre-flight Checks" "warn" "Static preflight still failed after repair attempt; runtime phase must diagnose."
         break
     fi
 
@@ -487,6 +516,9 @@ PFPROMPT
 done
 
 phase_done 5 "{\"status\":\"ok\",\"preflight_passed\":$PREFLIGHT_PASSED}"
+if [[ $PREFLIGHT_PASSED -eq 1 ]]; then
+    lesson_record 5 "Static Pre-flight Checks" "ok" "Preflight passed cleanly before launch."
+fi
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -495,6 +527,7 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Phase 6: Launching Services"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+phase_reminder 6 "Launching Services"
 
 # Check if services are already running (resume case)
 SERVICES_RUNNING=0
@@ -547,9 +580,17 @@ LAUNCH_OK=$?
 
 if [[ $LAUNCH_OK -eq 0 ]]; then
     phase_done 6 '{"status":"ok"}'
+    lesson_record 6 "Launching Services" "ok" "Backend/frontend became reachable within health-check timeout."
 else
     phase_done 6 '{"status":"partial"}'
     echo "  ⚠️  One or more services failed to start — UAT will diagnose"
+
+    FE_MISSING_DEV=$(grep -E "Missing script: \"dev\"" "$PROJECT_ROOT/frontend.log" 2>/dev/null | tail -1)
+    if [[ -n "$FE_MISSING_DEV" ]]; then
+        lesson_record 6 "Launching Services" "failed" "Frontend launch failed: npm script 'dev' missing in package.json. Ensure frontend/package.json has scripts.dev before launch."
+    else
+        lesson_record 6 "Launching Services" "failed" "Service health checks timed out (connection refused / startup failure). Inspect backend.log and frontend.log before UAT."
+    fi
 fi
 echo ""
 
@@ -559,6 +600,7 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Phase 7: Contract-Driven UAT"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+phase_reminder 7 "Contract-Driven UAT"
 echo "  Contract: $(jq '.backend.endpoints|length' "$CONTRACT_FILE") API tests + $(jq '.frontend.checks|length' "$CONTRACT_FILE") frontend checks"
 echo ""
 
@@ -568,10 +610,13 @@ UAT_PASSED=$([[ $UAT_EXIT -eq 0 ]] && echo 1 || echo 0)
 
 if [[ $UAT_PASSED -eq 1 ]]; then
     phase_done 7 '{"status":"ok","all_pass":true}'
+    lesson_record 7 "Contract-Driven UAT" "ok" "All contract tests passed in first UAT run."
     echo ""
     echo "  ✅ All UAT tests passed!"
 else
     phase_done 7 '{"status":"failed"}'
+    FAIL_CATS=$(jq -r '.failure_categories | join(", ")' "$UAT_REPORT" 2>/dev/null || echo "unknown")
+    lesson_record 7 "Contract-Driven UAT" "failed" "UAT failed with categories: $FAIL_CATS"
     echo ""
     echo "  ⚠️  UAT failures detected — entering debug loop"
 fi
@@ -586,6 +631,7 @@ if [[ $UAT_PASSED -eq 0 ]]; then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "Phase 8: Targeted Debug Loop"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    phase_reminder 8 "Targeted Debug Loop"
 
     # On resume: start from where we left off (don't repeat already-tried fixes)
     START_ITER=$((DEBUG_ITERATIONS + 1))
@@ -738,6 +784,7 @@ RESTART_HEALTH
         if [[ $REUAT_EXIT -eq 0 ]]; then
             UAT_PASSED=1
             phase_done 8 "{\"status\":\"ok\",\"iterations\":$DEBUG_ITERATIONS}"
+            lesson_record 8 "Targeted Debug Loop" "ok" "Resolved UAT failures by iteration $DEBUG_ITER."
             echo ""
             echo "  ✅ All tests pass after debug iteration $DEBUG_ITER!"
         else
@@ -746,6 +793,7 @@ import json; r=json.load(open('$UAT_REPORT'))
 f=[x['test'] for x in r.get('failures',[])]
 print(f'Still failing ({len(f)}): {f}')" 2>/dev/null)
             echo "  $REMAINING"
+            lesson_record 8 "Targeted Debug Loop" "failed" "Debug iteration $DEBUG_ITER still failing: $REMAINING"
             phase_done 8 "{\"status\":\"partial\",\"iterations\":$DEBUG_ITERATIONS}"
         fi
     done
@@ -803,6 +851,7 @@ echo "  📁  Project:      $PROJECT_ROOT"
 echo "  📋  Contract:     $CONTRACT_FILE"
 echo "  📊  UAT report:   $UAT_REPORT"
 echo "  💾  State file:   $STATE_FILE"
+echo "  🧠  Lessons dir:  $LESSONS_DIR"
 echo ""
 echo "  Generated files:"
 find "$PROJECT_ROOT" -type f \
