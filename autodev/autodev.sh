@@ -514,29 +514,63 @@ PYV
         echo "[Node] target=$dir" | tee -a "$PHASE4_LOG"
         npm install --prefix "$dir" --include=dev >> "$SETUP_LOG" 2>&1 || true
 
-        python3 - "$dir" "$PHASE4_LOG" << 'NV'
-import os,sys,json
-d,log=sys.argv[1],sys.argv[2]
+        python3 - "$dir" "$PHASE4_LOG" "$SETUP_LOG" << 'NV'
+import os,sys,json,subprocess
+from subprocess import TimeoutExpired
+
+d,log,setup=sys.argv[1],sys.argv[2],sys.argv[3]
 p=os.path.join(d,'package.json')
 if not os.path.exists(p): sys.exit(0)
 try:
     pkg=json.load(open(p))
 except Exception:
     pkg={}
-s=pkg.get('scripts',{}) or {}
-has_dev='dev' in s
-has_start='start' in s
+scripts=pkg.get('scripts',{}) or {}
+has_dev='dev' in scripts
+has_start='start' in scripts
+has_build='build' in scripts
 nm=os.path.isdir(os.path.join(d,'node_modules'))
+
 with open(log,'a') as f:
-    f.write(f"[Node] node_modules_present={nm} dev_script={has_dev} start_script={has_start}\n")
+    f.write(f"[Node] node_modules_present={nm} dev_script={has_dev} start_script={has_start} build_script={has_build}\n")
     deps={**pkg.get('dependencies',{}),**pkg.get('devDependencies',{})}
     miss=[]
-    for k in list(deps.keys())[:80]:
+    for k in list(deps.keys())[:120]:
         kp=os.path.join(d,'node_modules',*k.split('/'))
         if not os.path.isdir(kp):
             miss.append(k)
     if miss:
-        f.write(f"[Node] missing_declared_packages={miss[:20]}\n")
+        f.write(f"[Node] missing_declared_packages={miss[:30]}\n")
+
+# Explicitly test npm scripts work in Phase 4
+# build: must run and exit
+# dev/start: smoke-run with timeout (expect long-running; timeout means command started successfully)
+def run_script(script, timeout_sec):
+    cmd=['npm','run',script]
+    with open(setup,'a') as lf:
+        lf.write(f"\n[PHASE4_SCRIPT_TEST] {d} :: {' '.join(cmd)}\n")
+        try:
+            r=subprocess.run(cmd,cwd=d,stdout=lf,stderr=lf,timeout=timeout_sec)
+            return (r.returncode==0, f"exit={r.returncode}")
+        except TimeoutExpired:
+            return (True, f"timeout({timeout_sec}s)-assume-started")
+        except Exception as e:
+            return (False, f"error={e}")
+
+results=[]
+if has_build:
+    ok,msg=run_script('build',180)
+    results.append(("build",ok,msg))
+if has_dev:
+    ok,msg=run_script('dev',20)
+    results.append(("dev",ok,msg))
+if has_start:
+    ok,msg=run_script('start',20)
+    results.append(("start",ok,msg))
+
+with open(log,'a') as f:
+    for name,ok,msg in results:
+        f.write(f"[NodeScript] {name} ok={ok} {msg}\n")
 NV
 
     done < <(find "$PROJECT_ROOT" -name "package.json" -not -path "*/node_modules/*" -not -path "*/.next/*")
