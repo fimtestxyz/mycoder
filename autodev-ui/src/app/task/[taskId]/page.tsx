@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pause, Play, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -102,16 +103,19 @@ export default function TaskPage() {
   }, [task?.status]);
 
   return (
-    <main className="min-h-screen bg-[#f5f5f7] p-3 md:p-6">
+    <main className="min-h-screen bg-background p-3 md:p-6">
       <div className="mx-auto max-w-6xl space-y-4">
         <div className="flex items-center justify-between">
           <Link href="/" className="text-sm text-zinc-600 hover:text-zinc-900">← Back to tasks</Link>
-          <Button variant="outline" size="sm" onClick={() => setAutoScroll((v) => !v)}>
-            {autoScroll ? "Auto-scroll: On" : "Auto-scroll: Off"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <Button variant="outline" size="sm" onClick={() => setAutoScroll((v) => !v)}>
+              {autoScroll ? "Auto-scroll: On" : "Auto-scroll: Off"}
+            </Button>
+          </div>
         </div>
 
-        <Card className="rounded-3xl border-zinc-200 bg-white shadow-sm">
+        <Card className="rounded-3xl border-zinc-200 bg-card shadow-sm">
           <CardHeader>
             <CardTitle>Task {effectiveTaskId}</CardTitle>
             <CardDescription>{task?.goal ?? "Loading..."}</CardDescription>
@@ -154,7 +158,7 @@ export default function TaskPage() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-3xl border-zinc-200 bg-white shadow-sm">
+        <Card className="rounded-3xl border-zinc-200 bg-card shadow-sm">
           <CardHeader>
             <CardTitle className="text-base">Lessons Reminder</CardTitle>
             <CardDescription className="text-xs">Pulled from autodev lessons for current phase.</CardDescription>
@@ -174,7 +178,7 @@ export default function TaskPage() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-3xl border-zinc-200 bg-white shadow-sm">
+        <Card className="rounded-3xl border-zinc-200 bg-card shadow-sm">
           <CardHeader>
             <CardTitle>Task Logs</CardTitle>
           </CardHeader>

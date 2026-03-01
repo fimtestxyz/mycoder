@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { ChevronLeft, ChevronRight, Plus, Settings2, Star } from "lucide-react";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -99,41 +100,59 @@ export default function Home() {
 
   const TaskRow = ({ task }: { task: Task }) => {
     const isPinned = pinned.includes(task.taskId);
+    const statusColor =
+      task.status === "running"
+        ? "bg-emerald-500"
+        : task.status === "completed"
+          ? "bg-sky-500"
+          : task.status === "failed"
+            ? "bg-rose-500"
+            : task.status === "stopped"
+              ? "bg-amber-500"
+              : task.status === "canceled"
+                ? "bg-zinc-500"
+                : "bg-zinc-400";
+
     return (
-      <Link
-        href={`/task/${task.taskId}`}
-        key={task.taskId}
-        className="block rounded-2xl border border-zinc-200 px-3 py-2 hover:border-zinc-400"
-      >
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-[11px] text-zinc-500 truncate">{task.taskId}</p>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                togglePin(task.taskId);
-              }}
-              className="inline-flex items-center justify-center rounded-md p-1 hover:bg-zinc-100"
-              title={isPinned ? "Unpin task" : "Pin task"}
-            >
-              <Star className={`size-4 ${isPinned ? "fill-yellow-400 text-yellow-500" : "text-zinc-400"}`} />
-            </button>
-            <Badge className="capitalize">{task.status}</Badge>
+      <motion.div layout whileHover={{ y: -2 }} transition={{ duration: 0.15 }}>
+        <Link
+          href={`/task/${task.taskId}`}
+          key={task.taskId}
+          className="block rounded-2xl border border-zinc-200 px-3 py-2 hover:border-zinc-400"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className={`size-2 rounded-full ${statusColor} ${task.status === "running" ? "animate-pulse" : ""}`} />
+              <p className="text-[11px] text-zinc-500 truncate">{task.taskId}</p>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  togglePin(task.taskId);
+                }}
+                className="inline-flex items-center justify-center rounded-md p-1 hover:bg-zinc-100"
+                title={isPinned ? "Unpin task" : "Pin task"}
+              >
+                <Star className={`size-4 ${isPinned ? "fill-yellow-400 text-yellow-500" : "text-zinc-400"}`} />
+              </button>
+              <Badge className="capitalize">{task.status}</Badge>
+            </div>
           </div>
-        </div>
-        <p className="mt-1 line-clamp-2 text-sm">{task.goal}</p>
-      </Link>
+          <p className="mt-1 line-clamp-2 text-sm">{task.goal}</p>
+        </Link>
+      </motion.div>
     );
   };
 
   return (
-    <main className="min-h-screen bg-[#f5f5f7] p-3 md:p-6">
+    <main className="min-h-screen bg-background p-3 md:p-6">
       <div className="mx-auto max-w-7xl flex gap-4">
         <motion.aside
           animate={{ width: collapsed ? 64 : 320 }}
-          className="hidden md:block rounded-3xl border border-zinc-200 bg-white shadow-sm"
+          className="hidden md:block rounded-3xl border border-zinc-200 bg-card shadow-sm"
         >
           <div className="p-3 flex items-center justify-between">
             {!collapsed && <p className="font-semibold">Tasks</p>}
@@ -184,7 +203,10 @@ export default function Home() {
         </motion.aside>
 
         <section className="flex-1 space-y-4">
-          <Card className="rounded-3xl border-zinc-200 bg-white shadow-sm">
+          <div className="flex items-center justify-end">
+            <ThemeToggle />
+          </div>
+          <Card className="rounded-3xl border-zinc-200 bg-card shadow-sm">
             <CardHeader>
               <CardTitle>AutoDev Tasks</CardTitle>
               <CardDescription>Create a new task and open its dedicated page at /task/{"{task_id}"}.</CardDescription>

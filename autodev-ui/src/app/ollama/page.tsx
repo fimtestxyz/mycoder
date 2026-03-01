@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Save } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -57,11 +58,14 @@ export default function OllamaPage() {
   };
 
   return (
-    <main className="min-h-screen bg-[#f5f5f7] p-3 md:p-6">
+    <main className="min-h-screen bg-background p-3 md:p-6">
       <div className="mx-auto max-w-6xl space-y-4">
-        <Link href="/" className="text-sm text-zinc-600 hover:text-zinc-900">← Back to tasks</Link>
+        <div className="flex items-center justify-between">
+          <Link href="/" className="text-sm text-zinc-600 hover:text-zinc-900">← Back to tasks</Link>
+          <ThemeToggle />
+        </div>
 
-        <Card className="rounded-3xl border-zinc-200 bg-white shadow-sm">
+        <Card className="rounded-3xl border-zinc-200 bg-card shadow-sm">
           <CardHeader>
             <CardTitle>Ollama Management</CardTitle>
             <CardDescription>Service status, running models, and editable agent model config.</CardDescription>
@@ -83,7 +87,7 @@ export default function OllamaPage() {
             ] as const).map(([key, label]) => (
               <div key={key} className="space-y-1">
                 <p className="text-xs text-zinc-500">{label}</p>
-                <select className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm" value={config[key]} onChange={(e) => setConfig((prev) => ({ ...prev, [key]: e.target.value }))}>
+                <select className="w-full rounded-xl border border-zinc-300 bg-card px-3 py-2 text-sm" value={config[key]} onChange={(e) => setConfig((prev) => ({ ...prev, [key]: e.target.value }))}>
                   <option value={config[key]}>{config[key] || "Select model"}</option>
                   {availableModels.map((m) => (
                     <option key={m.name} value={m.name}>{m.name} {m.details?.parameter_size ? `(${m.details.parameter_size})` : ""}</option>
@@ -96,7 +100,7 @@ export default function OllamaPage() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-3xl border-zinc-200 bg-white shadow-sm">
+        <Card className="rounded-3xl border-zinc-200 bg-card shadow-sm">
           <CardHeader>
             <CardTitle>Ollama Agent Logs</CardTitle>
           </CardHeader>
