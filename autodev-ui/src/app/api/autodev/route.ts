@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   cancelTask,
+  deleteTask,
   getTask,
   listTasks,
   readTaskLogs,
@@ -57,7 +58,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as {
-      action?: "start" | "stop" | "resume" | "cancel";
+      action?: "start" | "stop" | "resume" | "cancel" | "delete";
       goal?: string;
       taskId?: string;
     };
@@ -86,6 +87,11 @@ export async function POST(request: NextRequest) {
     if (action === "cancel") {
       const task = cancelTask(taskId);
       return NextResponse.json({ ok: true, task });
+    }
+
+    if (action === "delete") {
+      const result = deleteTask(taskId);
+      return NextResponse.json({ ok: true, result });
     }
 
     return NextResponse.json({ ok: false, error: "Invalid action." }, { status: 400 });

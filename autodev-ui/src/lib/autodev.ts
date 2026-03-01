@@ -328,3 +328,48 @@ export function cancelTask(taskId: string): TaskRecord {
   writeTask(next);
   return next;
 }
+
+function detectProjectOutputPath(task: TaskRecord): string | null {
+  try {
+    if (!fs.existsSync(task.logFile)) return null;
+    const lines = fs.readFileSync(task.logFile, "utf-8").split(/\r?\n/);
+    const line = lines.find((x) => x.includes("Output:"));
+    const m = line?.match(/Output:\s+(.+)$/);
+    if (!m?.[1]) return null;
+    const p = m[1].trim();
+    const allowedRoot = path.resolve(projectRoot, "autodev", "workspace");
+    const resolved = path.resolve(p);
+    if (resolved.startsWith(allowedRoot)) return resolved;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function deleteTask(taskId: string) {
+  const task = getTask(taskId);
+  if (!task) throw new Error("Task not found.");
+
+  if (task.pid && task.status === "running") {
+    try {
+      process.kill(-task.pid, "SIGTERM");
+    } catch {
+      try {
+        process.kill(task.pid, "SIGTERM");
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  const outPath = detectProjectOutputPath(task);
+  if (outPath && fs.existsSync(outPath)) {
+    fs.rmSync(outPath, { recursive: true, force: true });
+  }
+
+  const tf = taskFile(taskId);
+  if (fs.existsSync(tf)) fs.rmSync(tf, { force: true });
+  if (fs.existsSync(task.logFile)) fs.rmSync(task.logFile, { force: true });
+
+  return { ok: true, deletedOutputPath: outPath };
+}

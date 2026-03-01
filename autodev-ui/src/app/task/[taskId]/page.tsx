@@ -242,7 +242,16 @@ export default function TaskPage() {
           <div className="mb-2 flex items-center justify-end">
             <Button size="sm" variant="outline" onClick={copyLogs}>{copyOk ? "Copied" : "Copy logs"}</Button>
           </div>
-          <div ref={logContainerRef} className="h-[70vh] overflow-y-auto rounded-2xl border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs">
+          <div
+            ref={logContainerRef}
+            onScroll={() => {
+              const el = logContainerRef.current;
+              if (!el) return;
+              const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
+              if (!nearBottom && autoScroll) setAutoScroll(false);
+            }}
+            className="h-[70vh] overflow-y-auto rounded-2xl border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs"
+          >
             {logs.length === 0 ? (
               <p className="text-zinc-500">No logs yet.</p>
             ) : (

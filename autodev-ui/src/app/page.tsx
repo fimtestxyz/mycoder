@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { ChevronLeft, ChevronRight, Plus, Settings2, Star } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Settings2, Star, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -28,6 +28,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [collapsed, setCollapsed] = useState(false);
   const [pinned, setPinned] = useState<string[]>([]);
+  const [deletingTaskIds, setDeletingTaskIds] = useState<string[]>([]);
   const [hoveredTask, setHoveredTask] = useState<Task | null>(null);
 
   const load = useCallback(async () => {
@@ -83,6 +84,23 @@ export default function Home() {
     setPinned((prev) => (prev.includes(taskId) ? prev.filter((id) => id !== taskId) : [...prev, taskId]));
   };
 
+  const deleteTask = async (taskId: string) => {
+    setDeletingTaskIds((prev) => [...prev, taskId]);
+    try {
+      const res = await fetch("/api/autodev", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete", taskId }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Delete failed");
+      setPinned((prev) => prev.filter((x) => x !== taskId));
+      setTasks((prev) => prev.filter((t) => t.taskId !== taskId));
+    } finally {
+      setDeletingTaskIds((prev) => prev.filter((x) => x !== taskId));
+    }
+  };
+
   const sortedTasks = useMemo(() => {
     const list = [...tasks];
     list.sort((a, b) => +new Date(b.createdAt || b.updatedAt) - +new Date(a.createdAt || a.updatedAt));
@@ -122,6 +140,8 @@ export default function Home() {
         className="group relative"
         onMouseEnter={() => setHoveredTask(task)}
         onMouseLeave={() => setHoveredTask((prev) => (prev?.taskId === task.taskId ? null : prev))}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: deletingTaskIds.includes(task.taskId) ? 0 : 1, y: deletingTaskIds.includes(task.taskId) ? -8 : 0 }}
       >
         <Link
           href={`/task/${task.taskId}`}
@@ -147,6 +167,18 @@ export default function Home() {
                 title={isPinned ? "Unpin task" : "Pin task"}
               >
                 <Star className={`size-4 ${isPinned ? "fill-yellow-400 text-yellow-500" : "text-zinc-400"}`} />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void deleteTask(task.taskId);
+                }}
+                className="inline-flex items-center justify-center rounded-md p-1 text-rose-500 hover:bg-rose-50"
+                title="Delete task and artifacts"
+              >
+                <Trash2 className="size-4" />
               </button>
               <Badge className="capitalize">{task.status}</Badge>
             </div>
